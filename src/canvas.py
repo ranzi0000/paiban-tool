@@ -176,13 +176,15 @@ class CanvasScene(QGraphicsScene):
         item = QGraphicsPixmapItem(pixmap)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-        # 满版拉伸到 sceneRect（A4）——分别按 x/y 缩放，确保图片占满整页
+        # 保比例最大化（contain）：图按原比例缩到能容纳 A4 的最大尺寸，居中放置
+        # 比例不匹配时会有上下/左右白边——这是用户预期的行为（不要拉伸变形）
         sr = self.sceneRect()
         sx = sr.width()  / pixmap.width()
         sy = sr.height() / pixmap.height()
-        from PyQt6.QtGui import QTransform
-        item.setTransform(QTransform.fromScale(sx, sy))
-        item.setPos(0, 0)
+        s = min(sx, sy)
+        item.setScale(s)
+        item.setPos((sr.width()  - pixmap.width()  * s) / 2,
+                    (sr.height() - pixmap.height() * s) / 2)
         item.setZValue(-1000)
         self.addItem(item)
         self.bg_item = item

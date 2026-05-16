@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="zh-cn"><head>
+<meta charset="utf-8">
+<title>牌位生成器 · 网页直填 + 导出 PDF</title>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, "PingFang SC", sans-serif; background: #555; color: #222; }
+.app { display: flex; height: 100vh; }
+.left { flex: 1; padding: 20px; overflow: auto; background: #555; display: flex; align-items: flex-start; justify-content: center; }
+.right { width: 320px; background: #f8f8f5; border-left: 1px solid #ccc; padding: 16px; overflow-y: auto; box-shadow: -2px 0 10px rgba(0,0,0,.1); }
+h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; color: #333; }
+.section { margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid #e0e0e0; }
+.section:last-child { border: none; }
+
+.dropzone { background: #fff; border: 2px dashed #888; padding: 60px; text-align: center; color: #666; border-radius: 8px; }
+.dropzone.dragover { background: #e0f0ff; border-color: #2a82e4; }
+input[type=file] { margin: 8px 0; }
+
+button { background: #1a1a1a; color: #fff; border: none; padding: 7px 12px; font-size: 13px; cursor: pointer; border-radius: 3px; margin-right: 4px; margin-bottom: 4px; }
+button:hover { background: #444; }
+button.primary { background: #c01e1e; padding: 11px 16px; font-size: 14px; font-weight: 600; width: 100%; margin-top: 4px; }
+button.primary:hover { background: #a01818; }
+button.secondary { background: #ddd; color: #222; }
+button.danger { background: #c00; }
+button.icon { padding: 5px 9px; font-size: 12px; min-width: 32px; }
+button.icon.active { background: #c01e1e; }
+
+/* === A4 页面（屏幕显示用 scale） === */
+.page-wrap {
+  background: #fff;
+  box-shadow: 0 4px 20px rgba(0,0,0,.4);
+  position: relative;
+  transform-origin: top left;
+  margin: 0 auto;
+}
+.page {
+  position: relative;
+  background: #fff;
+  overflow: hidden;
+  cursor: crosshair;
+  user-select: none;
+}
+.page.landscape { width: 297mm; height: 210mm; }
+.page.portrait  { width: 210mm; height: 297mm; }
+.page-img {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* === 可编辑文字框 === */
+.text-box {
+  position: absolute;
+  padding: 1mm 2mm;
+  outline: 1px dashed rgba(21,101,192,.6);
+  outline-offset: -1px;
+  cursor: move;
+  font-family: serif;
+  font-size: 6mm;
+  line-height: 1.25;
+  color: #000;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.text-box:hover { outline-color: #ff8800; }
+.text-box.selected { outline: 2px solid #ff8800; outline-offset: -2px; }
+.text-box[contenteditable=true] {
+  outline: 2px solid #ff8800;
+  cursor: text;
+  background: rgba(255,255,255,.5);
+}
+.text-box .resize-handle {
+  position: absolute;
+  bottom: -2px; right: -2px;
+  width: 10px; height: 10px;
+  background: #ff8800;
+  cursor: nwse-resize;
+  border-radius: 2px;
+}
+
+/* === 右侧面板 === */
+.props label { display: block; font-size: 12px; color: #555; margin-bottom: 3px; margin-top: 8px; }
+.props label:first-child { margin-top: 0; }
+.props input[type=text], .props select, .props input[type=number] {
+  width: 100%; padding: 5px 7px; font-size: 13px; border: 1px solid #ccc; border-radius: 2px;
+}
+.props input[type=color] { width: 100%; height: 32px; border: 1px solid #ccc; border-radius: 2px; padding: 2px; }
+.btn-row { display: flex; gap: 3px; margin-top: 4px; }
+.tip { font-size: 12px; color: #666; line-height: 1.6; padding: 8px; background: #fffacc; border-radius: 4px; margin: 6px 0; }
+.kbd { background: #eee; padding: 1px 5px; border-radius: 3px; font-size: 11px; font-family: ui-monospace, monospace; }
+.empty { color: #888; font-size: 12px; padding: 8px; }
+
+.list { margin: 6px 0; max-height: 160px; overflow-y: auto; }
+.list .item { padding: 6px 8px; border: 1px solid #e0e0e0; margin-bottom: 3px; border-radius: 3px; font-size: 12px; cursor: pointer; background: #fff; }
+.list .item:hover { background: #fafafa; }
+.list .item.selected { border-color: #ff8800; background: #fff8e1; }
+
+/* === 打印模式：隐藏 UI、把 page 还原到实际尺寸 === */
+@media print {
+  body { background: #fff !important; }
+  .left, .right { display: none !important; }
+  .app { display: block !important; }
+  .page-wrap { box-shadow: none !important; transform: none !important; margin: 0 !important; }
+  .text-box { outline: none !important; background: transparent !important; }
+  .text-box .resize-handle { display: none !important; }
+  .text-box.selected { outline: none !important; }
+  @page { size: A4; margin: 0; }
+  @page :first { margin: 0; }
+}
+@media print {
+  .page.landscape ~ * { page-orientation: landscape; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="left">
+    <div id="placeholder" class="dropzone">
+      <div style="font-size:18px; margin-bottom:14px;">把图片拖到这里</div>
+      <input type="file" id="file" accept="image/png,image/jpeg">
+      <p style="margin-top:18px; color:#888; font-size:13px;">支持 PNG / JPG。建议先把原图透明边裁掉。</p>
+    </div>
+    <div id="wrap" class="page-wrap" style="display:none;">
+      <div id="page" class="page landscape">
+        <img id="img" class="page-img" alt="">
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+
+    <div class="section">
+      <h2>模板</h2>
+      <div class="btn-row" style="margin-bottom: 6px;">
+        <input type="text" id="tpl_name" placeholder="模板名（如八卦）" style="flex:1; padding:5px 7px; font-size:13px; border:1px solid #ccc; border-radius:2px;">
+        <button onclick="saveTemplate()">保存</button>
+      </div>
+      <div id="tplList" class="list" style="max-height: 120px;"></div>
+      <div class="btn-row" style="margin-top:4px;">
+        <button class="secondary" onclick="exportAllTemplates()">导出全部</button>
+        <button class="secondary" onclick="document.getElementById('tpl_import').click()">导入</button>
+        <input type="file" id="tpl_import" accept=".json" style="display:none;">
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>页面方向</h2>
+      <div class="btn-row">
+        <button class="icon active" onclick="setOrient('landscape')" id="orient-l">横向</button>
+        <button class="icon" onclick="setOrient('portrait')" id="orient-p">竖向</button>
+        <button class="secondary" onclick="reloadImage()">换图</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>导入字体 <span id="fontCount" style="color:#888; font-size:11px; font-weight:normal;"></span></h2>
+      <input type="file" id="font_import" accept=".ttf,.otf,.woff,.woff2" multiple style="display:none;">
+      <div class="btn-row">
+        <button onclick="document.getElementById('font_import').click()">+ 选字体文件</button>
+        <button class="secondary" onclick="clearImportedFonts()">清空</button>
+      </div>
+      <div id="importedFonts" class="list" style="max-height:100px;"></div>
+      <div style="font-size:11px; color:#888; margin-top:4px;">
+        支持 .ttf .otf .woff .woff2（不支持 .ttc）<br>
+        Windows 字体目录：<code style="font-size:10px;">C:\Windows\Fonts\</code>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>使用说明</h2>
+      <div class="tip">
+        • 在图上 <span class="kbd">按住拖</span> 画文字框<br>
+        • <span class="kbd">单击</span>选中、<span class="kbd">双击</span>开始编辑<br>
+        • 拖框内部 = 移动；拖右下角 = 缩放<br>
+        • 选中后在右侧改字体/字号/粗体/颜色
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>文字框样式</h2>
+      <div id="props" class="props">
+        <div class="empty">还没选中文字框。拖一个矩形开始。</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>文字框列表</h2>
+      <div id="boxlist" class="list"></div>
+    </div>
+
+    <div class="section">
+      <button class="primary" onclick="exportPDF()">⬇ 导出 PDF</button>
+      <div id="exportStatus" style="font-size:11px; color:#888; margin-top:6px;">
+        导出后用预览/Adobe Reader 打开，批量打印时选"实际尺寸"
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+const placeholder = document.getElementById('placeholder');
+const wrap = document.getElementById('wrap');
+const page = document.getElementById('page');
+const imgEl = document.getElementById('img');
+let boxes = [];          // {id, el}
+let selected = null;     // box id
+let drawing = null;
+let dragging = null;
+let imgFileName = '';
+let imgDataURL = '';
+let availableFonts = [];   // 启动时探测后填充
+let importedFonts = [];    // 用户手动导入的字体 [{name, fileName, size}]
+
+// === 字体探测（系统已安装字体）===
+// 候选清单：macOS + Windows 常见中英文字体
+const FONT_CANDIDATES = [
+  // 中文（macOS + Windows 双覆盖）
+  { display: '宋体',         probe: 'Songti SC',           stack: '"Songti SC", "STSongti-SC-Regular", "SimSun", "宋体", serif' },
+  { display: '宋黑（粗宋）', probe: 'STSongti-SC-Black',   stack: '"STSongti-SC-Black", "Songti SC", "SimSun", serif' },
+  { display: '楷体',         probe: 'Kaiti SC',            stack: '"Kaiti SC", "STKaiti", "KaiTi", "楷体", serif' },
+  { display: '标楷体',       probe: 'BiauKai',             stack: '"BiauKai", "DFKai-SB", serif' },
+  { display: '隶变',         probe: 'Libian SC',           stack: '"Libian SC", "STLibian", "隶变", serif' },
+  { display: '报隶',         probe: 'Baoli SC',            stack: '"Baoli SC", "STBaoli", serif' },
+  { display: '隶书',         probe: 'LiSu',                stack: '"LiSu", "隶书", serif' },
+  { display: '黑体',         probe: 'Heiti SC',            stack: '"Heiti SC", "STHeiti", "SimHei", "黑体", sans-serif' },
+  { display: '苹方',         probe: 'PingFang SC',         stack: '"PingFang SC", sans-serif' },
+  { display: '兰亭黑',       probe: 'Lantinghei SC',       stack: '"Lantinghei SC", sans-serif' },
+  { display: '微软雅黑',     probe: 'Microsoft YaHei',     stack: '"Microsoft YaHei", "微软雅黑", sans-serif' },
+  { display: '圆体',         probe: 'Yuanti SC',           stack: '"Yuanti SC", sans-serif' },
+  { display: '手札体',       probe: 'Hannotate SC',        stack: '"Hannotate SC", cursive' },
+  { display: '翩翩体',       probe: 'HanziPen SC',         stack: '"HanziPen SC", cursive' },
+  { display: '凌慧体',       probe: 'LingWai TC',          stack: '"LingWai TC", cursive' },
+  { display: '行楷',         probe: 'Xingkai SC',          stack: '"Xingkai SC", "STXingkai", cursive' },
+  { display: '行书',         probe: 'STXinwei',            stack: '"STXinwei", cursive' },
+  { display: '雅痞',         probe: 'Yuppy SC',            stack: '"Yuppy SC", cursive' },
+  { display: '娃娃体',       probe: 'Wawati SC',           stack: '"Wawati SC", cursive' },
+  { display: '楷体 Win',     probe: 'KaiTi',               stack: '"KaiTi", "楷体", serif' },
+  { display: '仿宋',         probe: 'FangSong',            stack: '"FangSong", "仿宋", serif' },
+  { display: '思源黑体',     probe: 'Source Han Sans',     stack: '"Source Han Sans CN", "Source Han Sans SC", sans-serif' },
+  { display: '思源宋体',     probe: 'Source Han Serif',    stack: '"Source Han Serif CN", "Source Han Serif SC", serif' },
+
+  // 英文 / 标识用
+  { display: 'Helvetica',          probe: 'Helvetica',          stack: 'Helvetica, sans-serif' },
+  { display: 'Helvetica Neue',     probe: 'Helvetica Neue',     stack: '"Helvetica Neue", sans-serif' },
+  { display: 'Arial',              probe: 'Arial',              stack: 'Arial, sans-serif' },
+  { display: 'Times New Roman',    probe: 'Times New Roman',    stack: '"Times New Roman", Times, serif' },
+  { display: 'Times',              probe: 'Times',              stack: 'Times, serif' },
+  { display: 'Georgia',            probe: 'Georgia',            stack: 'Georgia, serif' },
+  { display: 'Verdana',            probe: 'Verdana',            stack: 'Verdana, sans-serif' },
+  { display: 'Courier New',        probe: 'Courier New',        stack: '"Courier New", monospace' },
+  { display: 'Menlo',              probe: 'Menlo',              stack: 'Menlo, monospace' },
+  { display: 'Monaco',             probe: 'Monaco',             stack: 'Monaco, monospace' },
+  { display: 'Optima',             probe: 'Optima',             stack: 'Optima, sans-serif' },
+  { display: 'Palatino',           probe: 'Palatino',           stack: 'Palatino, serif' },
+  { display: 'Avenir',             probe: 'Avenir',             stack: 'Avenir, sans-serif' },
+  { display: 'Avenir Next',        probe: 'Avenir Next',        stack: '"Avenir Next", sans-serif' },
+  { display: 'Futura',             probe: 'Futura',             stack: 'Futura, sans-serif' },
+  { display: 'Gill Sans',          probe: 'Gill Sans',          stack: '"Gill Sans", sans-serif' },
+  { display: 'Hoefler Text',       probe: 'Hoefler Text',       stack: '"Hoefler Text", serif' },
+  { display: 'Iowan Old Style',    probe: 'Iowan Old Style',    stack: '"Iowan Old Style", serif' },
+  { display: 'Marker Felt',        probe: 'Marker Felt',        stack: '"Marker Felt", cursive' },
+  { display: 'Noteworthy',         probe: 'Noteworthy',         stack: 'Noteworthy, cursive' },
+  { display: 'Papyrus',            probe: 'Papyrus',            stack: 'Papyrus, cursive' },
+  { display: 'Phosphate',          probe: 'Phosphate',          stack: 'Phosphate, sans-serif' },
+  { display: 'Rockwell',           probe: 'Rockwell',           stack: 'Rockwell, serif' },
+  { display: 'SignPainter',        probe: 'SignPainter',        stack: 'SignPainter, cursive' },
+  { display: 'Snell Roundhand',    probe: 'Snell Roundhand',    stack: '"Snell Roundhand", cursive' },
+  { display: 'Trebuchet MS',       probe: 'Trebuchet MS',       stack: '"Trebuchet MS", sans-serif' },
+  { display: 'Zapfino',            probe: 'Zapfino',            stack: 'Zapfino, cursive' },
+  { display: 'Brush Script MT',    probe: 'Brush Script MT',    stack: '"Brush Script MT", cursive' },
+  { display: 'Copperplate',        probe: 'Copperplate',        stack: 'Copperplate, serif' },
+];
+
+// canvas measureText 法：测某字体下"测试字符串"的宽度，与回退字体比对
+function isFontInstalled(family){
+  const test = 'mmmmmmmmmmlli';  // 不同字体宽度差异大
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.font = '72px monospace';
+  const w1 = ctx.measureText(test).width;
+  ctx.font = `72px "${family}", monospace`;
+  const w2 = ctx.measureText(test).width;
+  if (w1 !== w2) return true;
+  // 再用 serif 兜底（有些字体在 monospace 回退下宽度恰好相同）
+  ctx.font = '72px serif';
+  const w3 = ctx.measureText(test).width;
+  ctx.font = `72px "${family}", serif`;
+  const w4 = ctx.measureText(test).width;
+  return w3 !== w4;
+}
+
+async function detectAvailableFonts(){
+  // 优先尝试 Local Font Access API（HTTPS / localhost 才可用）
+  if (window.queryLocalFonts){
+    try {
+      const fonts = await window.queryLocalFonts();
+      const families = [...new Set(fonts.map(f => f.family))];
+      // 把 API 返回的家族名做为候选，全部加入
+      const apiFonts = families.map(family => ({
+        display: family, probe: family, stack: `"${family}"`
+      })).filter(f => isFontInstalled(f.probe));
+      return apiFonts;
+    } catch(e){
+      console.warn('Local Font Access API 不可用，回退到探测法：', e);
+    }
+  }
+  // 回退：用候选清单 + measureText 探测
+  return FONT_CANDIDATES.filter(f => isFontInstalled(f.probe));
+}
+
+// === A4 屏幕缩放 ===
+// 屏幕：用 transform scale 把 A4 实际尺寸缩成可视
+function fitToScreen(){
+  const margin = 40;
+  const availW = window.innerWidth - 320 - margin * 2;
+  const availH = window.innerHeight - margin * 2;
+  const pageRect = page.getBoundingClientRect();
+  // 用 page 实际 CSS 尺寸算（先重置 transform）
+  wrap.style.transform = '';
+  const pw = page.offsetWidth;
+  const ph = page.offsetHeight;
+  const scale = Math.min(availW / pw, availH / ph, 1);
+  wrap.style.transform = `scale(${scale})`;
+  wrap.style.width = (pw * scale) + 'px';
+  wrap.style.height = (ph * scale) + 'px';
+}
+window.addEventListener('resize', fitToScreen);
+
+// === 加载图 ===
+function loadFile(file){
+  imgFileName = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    imgDataURL = e.target.result;
+    imgEl.onload = () => {
+      placeholder.style.display = 'none';
+      wrap.style.display = 'block';
+      // 自动检测方向
+      const ratio = imgEl.naturalWidth / imgEl.naturalHeight;
+      setOrient(ratio >= 1 ? 'landscape' : 'portrait');
+    };
+    imgEl.src = imgDataURL;
+  };
+  reader.readAsDataURL(file);
+}
+document.getElementById('file').addEventListener('change', e => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+['dragenter','dragover'].forEach(ev => placeholder.addEventListener(ev, e => {
+  e.preventDefault(); placeholder.classList.add('dragover');
+}));
+['dragleave','drop'].forEach(ev => placeholder.addEventListener(ev, e => {
+  e.preventDefault(); placeholder.classList.remove('dragover');
+}));
+placeholder.addEventListener('drop', e => {
+  e.preventDefault();
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+function reloadImage(){
+  document.getElementById('file').click();
+}
+
+// === 切方向 ===
+function setOrient(o){
+  page.className = 'page ' + o;
+  document.getElementById('orient-l').classList.toggle('active', o === 'landscape');
+  document.getElementById('orient-p').classList.toggle('active', o === 'portrait');
+  fitToScreen();
+}
+
+// === 鼠标坐标 → page 内部坐标（mm）===
+const MM_PER_PX = 1 / (96/25.4);   // 1px = 0.264mm
+function screenToPageMM(clientX, clientY){
+  const rect = page.getBoundingClientRect();
+  const scale = rect.width / page.offsetWidth;
+  const px_x = (clientX - rect.left) / scale;
+  const px_y = (clientY - rect.top) / scale;
+  return [px_x * MM_PER_PX, px_y * MM_PER_PX];
+}
+
+// === 创建文字框 ===
+page.addEventListener('mousedown', e => {
+  // 点到文字框（或其内部任何子元素）→ 不要新建。closest 沿祖先链找，避免编辑回车后生成的子节点漏判
+  if (e.target.closest('.text-box')) return;
+  selectBox(null);
+  const [x, y] = screenToPageMM(e.clientX, e.clientY);
+  drawing = { startX: x, startY: y, el: null };
+  e.preventDefault();
+});
+window.addEventListener('mousemove', e => {
+  if (drawing){
+    const [x, y] = screenToPageMM(e.clientX, e.clientY);
+    const bx = Math.min(drawing.startX, x);
+    const by = Math.min(drawing.startY, y);
+    const bw = Math.abs(x - drawing.startX);
+    const bh = Math.abs(y - drawing.startY);
+    if (!drawing.el){
+      drawing.el = document.createElement('div');
+      drawing.el.className = 'text-box';
+      page.appendChild(drawing.el);
+    }
+    drawing.el.style.left = bx + 'mm';
+    drawing.el.style.top  = by + 'mm';
+    drawing.el.style.width  = bw + 'mm';
+    drawing.el.style.height = bh + 'mm';
+    drawing._c = {x:bx, y:by, w:bw, h:bh};
+  } else if (dragging){
+    const [x, y] = screenToPageMM(e.clientX, e.clientY);
+    const b = dragging.box;
+    if (dragging.mode === 'move'){
+      const nx = Math.max(0, x - dragging.offX);
+      const ny = Math.max(0, y - dragging.offY);
+      b.el.style.left = nx + 'mm';
+      b.el.style.top  = ny + 'mm';
+    } else {
+      const nw = Math.max(10, x - parseFloat(b.el.style.left));
+      const nh = Math.max(6, y - parseFloat(b.el.style.top));
+      b.el.style.width  = nw + 'mm';
+      b.el.style.height = nh + 'mm';
+    }
+  }
+});
+window.addEventListener('mouseup', () => {
+  if (drawing && drawing.el){
+    if (drawing._c && drawing._c.w > 3 && drawing._c.h > 3){
+      const id = 'b' + Date.now();
+      const box = { id, el: drawing.el, name: '文字 ' + (boxes.length + 1) };
+      drawing.el.dataset.id = id;
+      attachBoxHandlers(drawing.el, box);
+      boxes.push(box);
+      drawing.el.textContent = '双击编辑';
+      selectBox(id);
+      renderList();
+    } else {
+      drawing.el.remove();
+    }
+    drawing = null;
+  }
+  dragging = null;
+});
+
+function attachBoxHandlers(el, box){
+  // 加缩放手柄
+  const h = document.createElement('div');
+  h.className = 'resize-handle';
+  el.appendChild(h);
+  // 单击选中
+  el.addEventListener('mousedown', e => {
+    e.stopPropagation();   // 永远阻止冒泡到 page，避免触发新建框
+    if (el.contentEditable === 'true') return;   // 编辑模式下不拖
+    selectBox(box.id);
+    const [x, y] = screenToPageMM(e.clientX, e.clientY);
+    const isResize = e.target === h;
+    dragging = {
+      box,
+      offX: x - parseFloat(el.style.left),
+      offY: y - parseFloat(el.style.top),
+      mode: isResize ? 'resize' : 'move',
+    };
+  });
+  // 双击进入编辑
+  el.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    el.contentEditable = 'true';
+    if (el.textContent === '双击编辑') el.textContent = '';
+    el.focus();
+    // 全选当前内容
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+  // 失焦退出编辑
+  el.addEventListener('blur', () => {
+    el.contentEditable = 'false';
+    if (el.textContent === '') el.textContent = '双击编辑';
+    renderList();
+  });
+  // 编辑中按 Esc 退出
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Escape'){ el.blur(); }
+  });
+}
+
+function selectBox(id){
+  selected = id;
+  document.querySelectorAll('.text-box').forEach(el => {
+    el.classList.toggle('selected', el.dataset.id === id);
+  });
+  renderProps();
+  renderList();
+}
+
+// === 右侧样式面板 ===
+function renderProps(){
+  const props = document.getElementById('props');
+  const box = boxes.find(b => b.id === selected);
+  if (!box){
+    props.innerHTML = '<div class="empty">还没选中文字框</div>';
+    return;
+  }
+  const s = getComputedStyle(box.el);
+  const fontFamily = box.el.style.fontFamily || 'serif';
+  const fontSize = parseFloat(box.el.style.fontSize) || 6;
+  const fontWeight = box.el.style.fontWeight || 'normal';
+  const fontStyle = box.el.style.fontStyle || 'normal';
+  const color = box.el.style.color || '#000000';
+  const align = box.el.style.textAlign || 'left';
+  const lineH = box.el.style.lineHeight || '1.25';
+
+  // 动态生成字体选项（基于系统已安装字体探测结果）
+  const fontOptions = availableFonts.map(f =>
+    `<option value='${f.stack.replace(/'/g, "&apos;")}'>${f.display}</option>`
+  ).join('');
+  props.innerHTML = `
+    <label>字体 <span style="color:#888; font-weight:normal;">(${availableFonts.length} 个已装)</span></label>
+    <select onchange="setStyle('fontFamily', this.value)" id="fontSelect">${fontOptions}</select>
+
+    <label>字号 (mm)</label>
+    <input type="number" min="2" max="60" step="0.5" value="${fontSize}" onchange="setStyle('fontSize', this.value + 'mm')">
+
+    <label>样式</label>
+    <div class="btn-row">
+      <button class="icon ${fontWeight=='bold'||fontWeight>=600?'active':''}" onclick="toggleStyle('fontWeight','bold','normal')"><b>B</b></button>
+      <button class="icon ${fontStyle=='italic'?'active':''}" onclick="toggleStyle('fontStyle','italic','normal')"><i>I</i></button>
+    </div>
+
+    <label>对齐</label>
+    <div class="btn-row">
+      <button class="icon ${align=='left'?'active':''}" onclick="setStyle('textAlign','left')">左</button>
+      <button class="icon ${align=='center'?'active':''}" onclick="setStyle('textAlign','center')">中</button>
+      <button class="icon ${align=='right'?'active':''}" onclick="setStyle('textAlign','right')">右</button>
+    </div>
+
+    <label>字色</label>
+    <input type="color" value="${rgbToHex(color) || '#000000'}" onchange="setStyle('color', this.value)">
+
+    <label>行高（倍数）</label>
+    <input type="number" min="0.8" max="3" step="0.05" value="${parseFloat(lineH) || 1.25}" onchange="setStyle('lineHeight', this.value)">
+
+    <button class="danger" style="margin-top:10px; width:100%;" onclick="deleteSelected()">删除文字框</button>
+  `;
+  // 字体下拉默认选中当前
+  if (fontFamily){
+    const sel = props.querySelector('select');
+    [...sel.options].forEach(o => { o.selected = (o.value === fontFamily); });
+  }
+}
+
+function setStyle(prop, val){
+  const box = boxes.find(b => b.id === selected);
+  if (!box) return;
+  box.el.style[prop] = val;
+  renderProps();
+}
+function toggleStyle(prop, on, off){
+  const box = boxes.find(b => b.id === selected);
+  if (!box) return;
+  const cur = box.el.style[prop] || off;
+  box.el.style[prop] = (cur === on) ? off : on;
+  renderProps();
+}
+function deleteSelected(){
+  const box = boxes.find(b => b.id === selected);
+  if (!box) return;
+  box.el.remove();
+  boxes = boxes.filter(b => b.id !== selected);
+  selected = null;
+  renderProps();
+  renderList();
+}
+
+function renderList(){
+  const html = boxes.map(b => {
+    const preview = (b.el.textContent || '').slice(0, 12) || '(空)';
+    return `<div class="item ${selected===b.id?'selected':''}" onclick="selectBox('${b.id}')">${preview}</div>`;
+  }).join('');
+  document.getElementById('boxlist').innerHTML = html || '<div class="empty">还没有文字框</div>';
+}
+
+// rgb(0,0,0) → #000000；color picker 用 hex
+function rgbToHex(c){
+  if (!c) return null;
+  if (c[0] === '#') return c;
+  const m = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!m) return null;
+  const h = n => parseInt(n).toString(16).padStart(2,'0');
+  return '#' + h(m[1]) + h(m[2]) + h(m[3]);
+}
+
+// 点击空白处取消选中
+document.addEventListener('click', e => {
+  if (e.target === page || e.target === imgEl){
+    selectBox(null);
+  }
+});
+
+// ============ 模板保存/加载 ============
+const TPL_KEY = 'paifu_templates_v1';
+
+function loadTemplatesFromStorage(){
+  try {
+    return JSON.parse(localStorage.getItem(TPL_KEY) || '[]');
+  } catch(e){ return []; }
+}
+function saveTemplatesToStorage(list){
+  try {
+    localStorage.setItem(TPL_KEY, JSON.stringify(list));
+    return true;
+  } catch(e){
+    alert('保存失败：localStorage 空间不足。请删除几个不用的模板再试，或用"导出全部"备份到文件。\n\n错误：' + e.message);
+    return false;
+  }
+}
+
+function serializeCurrent(){
+  // 把当前页面状态序列化为模板对象
+  if (!imgDataURL){
+    alert('请先加载图片');
+    return null;
+  }
+  const boxData = boxes.map(b => ({
+    left: b.el.style.left,
+    top: b.el.style.top,
+    width: b.el.style.width,
+    height: b.el.style.height,
+    fontFamily: b.el.style.fontFamily,
+    fontSize: b.el.style.fontSize,
+    fontWeight: b.el.style.fontWeight,
+    fontStyle: b.el.style.fontStyle,
+    color: b.el.style.color,
+    textAlign: b.el.style.textAlign,
+    lineHeight: b.el.style.lineHeight,
+    content: b.el.textContent === '双击编辑' ? '' : b.el.textContent,
+  }));
+  return {
+    orient: page.classList.contains('portrait') ? 'portrait' : 'landscape',
+    imgDataURL,
+    imgFileName,
+    boxes: boxData,
+  };
+}
+
+function saveTemplate(){
+  const name = document.getElementById('tpl_name').value.trim();
+  if (!name){ alert('请填模板名'); return; }
+  const data = serializeCurrent();
+  if (!data) return;
+  const list = loadTemplatesFromStorage();
+  const existIdx = list.findIndex(t => t.name === name);
+  const tpl = { id: 't' + Date.now(), name, createdAt: Date.now(), ...data };
+  if (existIdx >= 0){
+    if (!confirm(`同名模板"${name}"已存在，覆盖？`)) return;
+    list[existIdx] = tpl;
+  } else {
+    list.push(tpl);
+  }
+  if (saveTemplatesToStorage(list)){
+    renderTemplateList();
+    flashStatus(`已保存模板"${name}"`);
+  }
+}
+
+function loadTemplate(id){
+  const list = loadTemplatesFromStorage();
+  const tpl = list.find(t => t.id === id);
+  if (!tpl) return;
+  if (boxes.length > 0 || imgDataURL){
+    if (!confirm('加载模板会清空当前内容，继续？')) return;
+  }
+  // 清空当前
+  boxes.forEach(b => b.el.remove());
+  boxes = [];
+  selected = null;
+
+  // 恢复图
+  imgDataURL = tpl.imgDataURL;
+  imgFileName = tpl.imgFileName || '';
+  imgEl.onload = () => {
+    placeholder.style.display = 'none';
+    wrap.style.display = 'block';
+    setOrient(tpl.orient || 'landscape');
+    // 恢复文字框（要等 page 重新布局后）
+    requestAnimationFrame(() => {
+      (tpl.boxes || []).forEach(bd => {
+        const el = document.createElement('div');
+        el.className = 'text-box';
+        ['left','top','width','height','fontFamily','fontSize','fontWeight','fontStyle','color','textAlign','lineHeight']
+          .forEach(k => { if (bd[k]) el.style[k] = bd[k]; });
+        el.textContent = bd.content || '双击编辑';
+        page.appendChild(el);
+        const id = 'b' + Date.now() + Math.floor(Math.random()*1000);
+        el.dataset.id = id;
+        const box = { id, el };
+        attachBoxHandlers(el, box);
+        boxes.push(box);
+      });
+      renderList();
+      document.getElementById('tpl_name').value = tpl.name;
+    });
+  };
+  imgEl.src = imgDataURL;
+}
+
+function deleteTemplate(id){
+  const list = loadTemplatesFromStorage();
+  const tpl = list.find(t => t.id === id);
+  if (!tpl) return;
+  if (!confirm(`删除模板"${tpl.name}"？`)) return;
+  saveTemplatesToStorage(list.filter(t => t.id !== id));
+  renderTemplateList();
+}
+
+function renderTemplateList(){
+  const list = loadTemplatesFromStorage();
+  const html = list.map(t => `
+    <div class="item" style="display:flex; align-items:center; gap:6px;">
+      <span style="flex:1; cursor:pointer;" onclick="loadTemplate('${t.id}')">
+        <strong>${escapeHTML(t.name)}</strong>
+        <div style="color:#888; font-size:11px;">${(t.boxes||[]).length} 个文字框 · ${new Date(t.createdAt).toLocaleDateString()}</div>
+      </span>
+      <button class="icon" style="padding:3px 6px; font-size:11px; background:#c00;" onclick="event.stopPropagation(); deleteTemplate('${t.id}')">×</button>
+    </div>
+  `).join('');
+  document.getElementById('tplList').innerHTML = html || '<div class="empty">还没有保存的模板</div>';
+}
+function escapeHTML(s){ return (s||'').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'})[c]); }
+
+function exportAllTemplates(){
+  const list = loadTemplatesFromStorage();
+  if (list.length === 0){ alert('还没有模板可导出'); return; }
+  const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `牌位模板_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+}
+
+document.getElementById('tpl_import').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const imported = JSON.parse(ev.target.result);
+      if (!Array.isArray(imported)) throw new Error('文件格式错（应为模板数组）');
+      const cur = loadTemplatesFromStorage();
+      const merged = [...cur];
+      imported.forEach(t => {
+        if (!merged.find(m => m.name === t.name)) merged.push({...t, id: 't' + Date.now() + Math.random()});
+      });
+      if (saveTemplatesToStorage(merged)){
+        renderTemplateList();
+        alert(`已导入 ${imported.length} 个模板`);
+      }
+    } catch(err){
+      alert('导入失败：' + err.message);
+    }
+    e.target.value = '';   // 允许再次导入同文件
+  };
+  reader.readAsText(file);
+});
+
+function flashStatus(msg){
+  // 简易反馈：浮动条 3 秒
+  let t = document.getElementById('_flash');
+  if (!t){
+    t = document.createElement('div');
+    t.id = '_flash';
+    t.style.cssText = 'position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1a6b1a; color:#fff; padding:8px 16px; border-radius:4px; font-size:13px; z-index:9999; box-shadow:0 4px 12px rgba(0,0,0,.3);';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity 0.4s'; }, 2200);
+}
+
+// 启动时刷新模板列表 + 探测系统字体 + 加载已导入字体
+renderTemplateList();
+(async () => {
+  availableFonts = await detectAvailableFonts();
+  console.log(`检测到 ${availableFonts.length} 个可用字体`, availableFonts.map(f => f.display));
+  await loadImportedFontsFromDB();    // 恢复上次导入的字体
+  refreshFontCount();
+  if (selected) renderProps();
+})();
+
+// ============ 手动导入字体（FontFace API + IndexedDB 持久化）============
+const FONT_DB_NAME = 'paifu_fonts_v1';
+const FONT_STORE = 'fonts';
+
+function openFontDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(FONT_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(FONT_STORE, { keyPath: 'name' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function saveFontToDB(name, buffer, fileName){
+  const db = await openFontDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FONT_STORE, 'readwrite');
+    tx.objectStore(FONT_STORE).put({ name, buffer, fileName, size: buffer.byteLength });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function loadImportedFontsFromDB(){
+  try {
+    const db = await openFontDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(FONT_STORE, 'readonly');
+      const req = tx.objectStore(FONT_STORE).getAll();
+      req.onsuccess = async () => {
+        for (const rec of req.result){
+          try {
+            const ff = new FontFace(rec.name, rec.buffer);
+            await ff.load();
+            document.fonts.add(ff);
+            importedFonts.push({ name: rec.name, fileName: rec.fileName, size: rec.size });
+            availableFonts.push({ display: '★ ' + rec.name, probe: rec.name, stack: `"${rec.name}"` });
+          } catch(e){ console.warn('恢复字体失败', rec.name, e); }
+        }
+        renderImportedFontsList();
+        resolve();
+      };
+      req.onerror = () => resolve();
+    });
+  } catch(e){ console.warn('字体 DB 不可用', e); }
+}
+async function clearImportedFontsFromDB(){
+  try {
+    const db = await openFontDB();
+    return new Promise(resolve => {
+      const tx = db.transaction(FONT_STORE, 'readwrite');
+      tx.objectStore(FONT_STORE).clear();
+      tx.oncomplete = () => resolve();
+    });
+  } catch(e){}
+}
+
+async function importFontFile(file){
+  const fontName = file.name.replace(/\.(ttf|otf|woff2?|TTF|OTF|WOFF2?)$/, '');
+  importedFonts = importedFonts.filter(f => f.name !== fontName);
+  availableFonts = availableFonts.filter(f => f.probe !== fontName);
+
+  // 1. 读文件
+  let buffer;
+  try {
+    buffer = await file.arrayBuffer();
+  } catch(e){
+    return { ok: false, name: fontName, error: `读取失败 (${e.name || 'Error'}): ${e.message}` };
+  }
+  console.log(`[font] ${file.name}: 已读取 ${(buffer.byteLength/1024/1024).toFixed(1)} MB`);
+
+  // 2. 字节探测：判断是不是 .ttc 改了扩展名
+  const dv = new DataView(buffer, 0, 4);
+  const tag = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+  if (tag === 'ttcf'){
+    return { ok: false, name: fontName,
+      error: `这其实是 .ttc 字体集合（文件头为 "ttcf"），浏览器 FontFace API 不支持。需用 fontforge 或 fonttools 把 .ttc 拆成单独 .ttf` };
+  }
+  // OpenType 文件头应该是 'OTTO' (CFF) 或 0x00010000 (TrueType) 或 'true' / 'typ1'
+  const validHeaders = ['OTTO', 'true', 'typ1'];
+  const isOT = validHeaders.includes(tag) || (dv.getUint32(0) === 0x00010000);
+  if (!isOT){
+    console.warn(`[font] 文件头标签 = "${tag}"，可能不是标准字体格式`);
+  }
+
+  // 3. FontFace 加载（直接）
+  let loadedBuffer = buffer;
+  let sanitized = false;
+  try {
+    const ff = new FontFace(fontName, buffer);
+    await ff.load();
+    document.fonts.add(ff);
+    console.log(`[font] FontFace 直接加载成功`);
+  } catch(e){
+    console.warn(`[font] 直接加载失败 (${e.name}): ${e.message}`);
+    console.log(`[font] 尝试用 opentype.js 净化后重试...`);
+    // 失败 → 尝试净化（用 opentype.js 重新打包，自动剔除非标准表）
+    try {
+      if (!window.opentype) throw new Error('opentype.js 未加载（检查网络/CDN）');
+      const font = window.opentype.parse(buffer);
+      // 删常见问题表（opentype.js 的 toArrayBuffer 默认就不会输出 DSIG，但显式清一下保险）
+      if (font.tables) {
+        ['DSIG','MVAR','HVAR','VVAR','STAT','fvar','gvar','avar','BASE','EBDT','EBLC','EBSC'].forEach(t => {
+          delete font.tables[t];
+        });
+      }
+      loadedBuffer = font.toArrayBuffer();
+      console.log(`[font] 净化后 buffer: ${(loadedBuffer.byteLength/1024/1024).toFixed(1)} MB（原 ${(buffer.byteLength/1024/1024).toFixed(1)} MB）`);
+      const ff2 = new FontFace(fontName, loadedBuffer);
+      await ff2.load();
+      document.fonts.add(ff2);
+      sanitized = true;
+      console.log(`[font] 净化后加载成功`);
+    } catch(e2){
+      return { ok: false, name: fontName,
+        error: `字体加载失败：\n  直接加载: ${e.message}\n  净化重试: ${e2.message}\n\n字体格式过于特殊。建议改用 .woff2 或用 fontTools/fontforge 在本地处理一遍。` };
+    }
+  }
+
+  // 4. 存 IndexedDB（存净化后的 buffer，下次直接用）
+  let warn = '';
+  try {
+    await saveFontToDB(fontName, loadedBuffer, file.name);
+  } catch(e){
+    warn = ' (持久化失败，下次需重新导入：' + (e.name || '') + ' ' + e.message + ')';
+    console.warn(`[font] 存 IndexedDB 失败:`, e);
+  }
+
+  importedFonts.push({ name: fontName, fileName: file.name, size: loadedBuffer.byteLength });
+  availableFonts.push({ display: '★ ' + fontName, probe: fontName, stack: `"${fontName}"` });
+  return { ok: true, name: fontName, warn, sanitized };
+}
+
+document.getElementById('font_import').addEventListener('change', async e => {
+  const files = Array.from(e.target.files || []);
+  if (files.length === 0) return;
+  let success = 0, fail = 0, msgs = [];
+  for (const file of files){
+    const sizeMB = (file.size/1024/1024).toFixed(1);
+    flashStatus(`加载字体 ${file.name} (${sizeMB} MB)...`);
+    if (/\.ttc$/i.test(file.name)){
+      fail++; msgs.push(`✗ ${file.name}：不支持 .ttc`);
+      continue;
+    }
+    const r = await importFontFile(file);
+    if (r.ok){
+      success++;
+      const tag = r.sanitized ? ' [自动净化]' : '';
+      msgs.push(`✓ ${r.name} 加载成功${tag}${r.warn || ''}`);
+    } else {
+      fail++;
+      msgs.push(`✗ ${file.name}\n   ${r.error}`);
+    }
+  }
+  renderImportedFontsList();
+  refreshFontCount();
+  if (selected) renderProps();
+  alert(`导入完成：成功 ${success}、失败 ${fail}\n\n${msgs.join('\n\n')}`);
+  e.target.value = '';
+});
+
+async function clearImportedFonts(){
+  if (importedFonts.length === 0) return;
+  if (!confirm(`清空所有 ${importedFonts.length} 个已导入字体？`)) return;
+  // 从 document.fonts 移除
+  for (const f of importedFonts){
+    document.fonts.forEach(ff => { if (ff.family === f.name) document.fonts.delete(ff); });
+  }
+  // 从 availableFonts 移除
+  availableFonts = availableFonts.filter(f => !importedFonts.find(i => i.name === f.probe));
+  importedFonts = [];
+  await clearImportedFontsFromDB();
+  renderImportedFontsList();
+  refreshFontCount();
+  if (selected) renderProps();
+}
+
+function renderImportedFontsList(){
+  const el = document.getElementById('importedFonts');
+  if (importedFonts.length === 0){
+    el.innerHTML = '<div class="empty">还没有导入的字体</div>';
+    return;
+  }
+  el.innerHTML = importedFonts.map(f => `
+    <div class="item" style="cursor:default;">
+      <strong style="font-family:'${f.name}', serif;">${escapeHTML(f.name)}</strong>
+      <div style="color:#888; font-size:11px;">${(f.size/1024).toFixed(0)} KB</div>
+    </div>
+  `).join('');
+}
+function refreshFontCount(){
+  const total = availableFonts.length;
+  const imported = importedFonts.length;
+  document.getElementById('fontCount').textContent =
+    `(${total} 个可用${imported ? `，含 ${imported} 个导入` : ''})`;
+}
+
+// ============ 导出 PDF（html2canvas → PNG → pdf-lib 嵌入）============
+async function exportPDF(){
+  if (!imgDataURL){ setExportStatus('请先加载图片', 'err'); return; }
+  setExportStatus('正在生成 PDF...（截图 + 嵌入，约 3-8 秒）');
+
+  // 临时清理 UI 装饰（截图不要带选中高亮、虚线、缩放手柄）
+  const prevSelected = selected;
+  selectBox(null);
+  page.classList.add('exporting');
+  const styleTag = document.createElement('style');
+  styleTag.id = '_export_style';
+  styleTag.textContent = `
+    .text-box { outline: none !important; background: transparent !important; }
+    .text-box .resize-handle { display: none !important; }
+    .text-box.selected { outline: none !important; }
+  `;
+  document.head.appendChild(styleTag);
+
+  try {
+    // html2canvas 截图（高 DPI：scale=3 ≈ 300 DPI）
+    // 临时把 page-wrap 的 transform 还原成 1，让截图按真实 mm 尺寸渲染
+    const prevTransform = wrap.style.transform;
+    const prevW = wrap.style.width, prevH = wrap.style.height;
+    wrap.style.transform = 'none';
+    wrap.style.width = page.offsetWidth + 'px';
+    wrap.style.height = page.offsetHeight + 'px';
+
+    const canvas = await html2canvas(page, {
+      scale: 3,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+    });
+
+    // 还原 wrap 缩放
+    wrap.style.transform = prevTransform;
+    wrap.style.width = prevW;
+    wrap.style.height = prevH;
+
+    // canvas → PNG bytes
+    const pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+    const pngBytes = await pngBlob.arrayBuffer();
+
+    // 用 pdf-lib 把图嵌入 A4 PDF
+    const { PDFDocument } = PDFLib;
+    const pdfDoc = await PDFDocument.create();
+    const isLandscape = page.classList.contains('landscape');
+    const A4 = isLandscape ? [841.89, 595.28] : [595.28, 841.89];
+    const pdfPage = pdfDoc.addPage(A4);
+    const png = await pdfDoc.embedPng(pngBytes);
+    pdfPage.drawImage(png, { x: 0, y: 0, width: A4[0], height: A4[1] });
+    const pdfBytes = await pdfDoc.save();
+
+    // 下载
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+    const tplName = document.getElementById('tpl_name').value.trim() || imgFileName.replace(/\.[^.]+$/, '') || 'paifu';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${tplName}.pdf`;
+    a.click();
+    setExportStatus(`✓ 已下载 ${tplName}.pdf（${(pdfBytes.length/1024/1024).toFixed(2)} MB）`, 'ok');
+  } catch(err){
+    console.error(err);
+    setExportStatus('生成失败：' + err.message, 'err');
+  } finally {
+    // 还原 UI 装饰
+    document.getElementById('_export_style')?.remove();
+    page.classList.remove('exporting');
+    if (prevSelected) selectBox(prevSelected);
+  }
+}
+
+function setExportStatus(msg, kind = ''){
+  const el = document.getElementById('exportStatus');
+  el.textContent = msg;
+  el.style.color = kind === 'ok' ? '#1a6b1a' : kind === 'err' ? '#c00' : '#888';
+}
+</script>
+</body></html>

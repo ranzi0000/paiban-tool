@@ -1,0 +1,120 @@
+# 排版小工具
+
+一个本地运行的桌面排版工具：**导入图片 → 拖出文字框 → 编辑文字 → 导出 PDF**。
+
+适合做"在固定底图上填字"的批量场景：祈福牌位、请柬模板、奖状证书、产品标签等。所有数据在本地处理，不上传任何服务器。
+
+![screenshot](docs/screenshot.png)
+
+## 为什么不用浏览器
+
+之前做过 HTML 版本（`web/` 目录留有备份），但浏览器的 FontFace API 对字体格式校验过于严格，**很多中文手写字体（30MB+ CJK .ttf）会被拒绝**，提示 `Invalid font data in ArrayBuffer`。Qt 的字体引擎基于 FreeType，宽容得多，能直接吃下浏览器拒绝的字体——这是桌面化的核心动机。
+
+## 核心功能
+
+- **加载任意图片当背景**（PNG / JPG / WebP / TIFF 等）
+- **A4 横向/竖向自适应**，背景图按比例居中铺满
+- **拖出任意数量的文字框**，每个独立设置：
+  - 字体（系统已装 + 用户导入的字体）
+  - 字号 / 粗体 / 斜体
+  - 颜色 / 对齐 / 行高
+  - 内容（支持多行 / 直接键盘输入）
+- **导入本地字体文件**（.ttf / .otf / .ttc / .woff / .woff2）
+  - Qt 字体引擎宽容，**浏览器拒绝的字体在这里能加载**
+  - 持久化到本地，重启自动加载
+- **模板保存 / 加载**（含背景图 + 文字框位置 + 样式 + 内容）
+- **导出 PDF**（1200 DPI 矢量渲染，文字保持可缩放）
+- **跨平台**：Windows / macOS / Linux 都能跑
+
+## 安装与运行
+
+### 普通用户（Windows）
+
+直接到 [Releases](../../releases) 下载最新 `.exe`，双击运行。
+
+### 开发者 / macOS / Linux
+
+```bash
+git clone https://github.com/<your-username>/paiban-tool.git
+cd paiban-tool
+
+# 装依赖
+pip install -r requirements.txt
+
+# 运行
+cd src && python main.py
+```
+
+依赖（详见 `requirements.txt`）：
+- Python 3.10+
+- PyQt6
+
+## 使用流程
+
+1. 点右上"选择图片…" → 选你的底图
+2. 在画布上**按住鼠标拖**画文字框
+3. **双击**文字框开始编辑、打字
+4. **单击**选中文字框 → 右侧改字体/字号/颜色/对齐
+5. 点右下 **"⬇ 导出 PDF"** 保存
+6. 调好的版面可保存为**模板**，下次复用（含字段位置和样式）
+
+### 字体导入
+
+如果你想用系统外的手写体 / 设计字体：
+1. 右侧"导入字体"区点 **+ 选字体文件**
+2. 选 `.ttf` / `.otf` 等字体文件
+3. 字体加入下拉，立即可选
+
+## 自己打包成 EXE
+
+项目里 `.github/workflows/build-windows.yml` 已配置好。**推一个 `v*` 标签**触发自动打包：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+打包好的 `.exe` 会自动发布到 GitHub Releases。
+
+手动打包（本地）：
+
+```bash
+cd src
+pip install pyinstaller
+pyinstaller --onefile --windowed --name 排版小工具 --collect-all PyQt6 main.py
+# 输出在 src/dist/
+```
+
+## 项目结构
+
+```
+paiban-tool/
+├── src/
+│   ├── main.py             # 入口
+│   ├── main_window.py      # 主窗口
+│   ├── canvas.py           # 画布 + 文字框（QGraphicsView）
+│   ├── side_panel.py       # 右侧属性面板
+│   ├── font_manager.py     # 字体管理
+│   ├── template_store.py   # 模板保存/加载
+│   ├── pdf_export.py       # PDF 导出
+│   └── style.py            # QSS 样式
+├── .github/workflows/
+│   └── build-windows.yml   # 自动打包 Windows EXE
+├── requirements.txt
+└── README.md
+```
+
+## 数据存放位置
+
+- **导入字体**：`~/.paiban-tool/paiban-tool/fonts/`（macOS/Linux）/ `%APPDATA%\paiban-tool\fonts\`（Windows）
+- **模板文件**：同上目录的 `templates/` 子目录
+
+## 已知限制
+
+- 文字框的字号当前用 `pt`（点），打印时 1pt ≈ 0.353mm。如果你需要按 mm 精确控制可以等比换算
+- PDF 导出按场景 1:1 渲染，文字保持矢量；背景图按嵌入分辨率
+- 当前只支持单页 A4，多页文档不支持
+
+## 许可
+
+MIT

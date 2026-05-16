@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
     # ================= 文件 =================
     def open_image(self):
         path, _ = QFileDialog.getOpenFileName(self, '选择图片', '',
-            'Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp)')
+            'Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp);;All Files (*)')
         if not path: return
         pm = QPixmap(path)
         if pm.isNull():

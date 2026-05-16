@@ -127,7 +127,10 @@ class SidePanel(QWidget):
         plv.addWidget(make_field_label('字体'))
         self.font_combo = QComboBox()
         self.font_combo.setMaxVisibleItems(20)
-        self.font_combo.currentTextChanged.connect(lambda v: self._emit('font_family', v))
+        # 用 currentIndexChanged + itemData 取真实 family（不是带 ★ 前缀的 displayText）
+        self.font_combo.currentIndexChanged.connect(
+            lambda i: self._emit('font_family', self.font_combo.itemData(i)) if i >= 0 else None
+        )
         plv.addWidget(self.font_combo)
 
         plv.addWidget(make_field_label('字号 (pt)'))

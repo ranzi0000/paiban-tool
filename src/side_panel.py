@@ -134,9 +134,18 @@ class SidePanel(QWidget):
         plv.addWidget(self.font_combo)
 
         plv.addWidget(make_field_label('字号 (pt)'))
-        self.size_spin = QSpinBox(); self.size_spin.setRange(4, 200); self.size_spin.setValue(18)
+        size_row = QHBoxLayout(); size_row.setSpacing(4)
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(4, 300)
+        self.size_spin.setValue(18)
+        self.size_spin.setSingleStep(2)  # 上下箭头每次 +/- 2，变化更明显
         self.size_spin.valueChanged.connect(lambda v: self._emit('font_size', v))
-        plv.addWidget(self.size_spin)
+        btn_minus = QPushButton('−'); btn_minus.setProperty('role','secondary'); btn_minus.setFixedWidth(36)
+        btn_plus  = QPushButton('+'); btn_plus.setProperty('role','secondary');  btn_plus.setFixedWidth(36)
+        btn_minus.clicked.connect(lambda: self.size_spin.setValue(self.size_spin.value() - 2))
+        btn_plus.clicked.connect(lambda:  self.size_spin.setValue(self.size_spin.value() + 2))
+        size_row.addWidget(btn_minus); size_row.addWidget(self.size_spin, 1); size_row.addWidget(btn_plus)
+        plv.addLayout(size_row)
 
         plv.addWidget(make_field_label('样式'))
         row = QHBoxLayout()

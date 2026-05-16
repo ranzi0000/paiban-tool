@@ -29,10 +29,12 @@ def export_scene_to_pdf(scene: CanvasScene, out_path: str, orient: str = 'landsc
             it.setSelected(False)
 
     painter = QPainter(printer)
-    # 渲染整个 scene 到 printer 的 pageRect
-    target_rect = printer.pageRect(QPrinter.Unit.Point)
-    # 用 sceneRect 做 source
-    scene.render(painter, target_rect, scene.sceneRect())
+    # 关键：painter 在 HighResolution (1200 DPI) 下用 device pixel 坐标系
+    # 必须用 painter.viewport() 取整页 device pixel 区域，不能用 Unit.Point
+    # （之前用 Unit.Point 导致 scene 只渲染到 ~24% 区域）
+    target_rect = painter.viewport()
+    from PyQt6.QtCore import QRectF
+    scene.render(painter, QRectF(target_rect), scene.sceneRect())
     painter.end()
 
     # 恢复选中状态

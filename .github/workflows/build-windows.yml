@@ -6,6 +6,9 @@ on:
       - 'v*'      # 推 tag 触发自动打包 + 上传 release
   workflow_dispatch:  # 也允许手动触发
 
+permissions:
+  contents: write   # 让 GITHUB_TOKEN 能创建 Release
+
 jobs:
   build:
     runs-on: windows-latest

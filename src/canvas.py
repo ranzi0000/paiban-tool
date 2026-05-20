@@ -2,12 +2,15 @@
 from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsItem, QGraphicsTextItem,
     QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsItemGroup, QInputDialog,
+    QFileDialog,
 )
 from PyQt6.QtGui import (
     QPixmap, QPen, QColor, QBrush, QFont, QPainter, QTransform, QCursor,
     QFontMetricsF,
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QObject
+
+from template_store import pixmap_to_base64, pixmap_from_base64
 
 # A4 在 96 DPI 屏幕下的像素尺寸（用于场景坐标系）
 MM_TO_PX = 96 / 25.4   # ~3.78
@@ -224,6 +227,7 @@ class TextBoxItem(QGraphicsTextItem):
         """序列化（保存模板用）"""
         f = self.font()
         return {
+            'type': 'text',
             'x': self.pos().x(),
             'y': self.pos().y(),
             'width': self._fixed_width,
@@ -263,9 +267,145 @@ class TextBoxItem(QGraphicsTextItem):
         return t
 
 
+class PhotoBoxItem(QGraphicsItem):
+    """可拖动、可缩放的照片框；照片按 contain（完整保比例）居中显示"""
+    HANDLE_SIZE = 12
+
+    def __init__(self, scene_ref, w=200.0, h=150.0):
+        super().__init__()
+        self._scene_ref = scene_ref
+        self._export_mode = False
+        self._w = max(20.0, float(w))
+        self._h = max(20.0, float(h))
+        self._pixmap = QPixmap()          # 空 = 还没选照片
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setAcceptHoverEvents(True)
+        self._resizing = False
+        self._resize_anchor = QPointF()
+        self._orig_size = (self._w, self._h)
+
+    # ------- 照片 / 尺寸 -------
+    def set_pixmap(self, pixmap):
+        self._pixmap = pixmap if (pixmap is not None and not pixmap.isNull()) else QPixmap()
+        self.update()
+
+    def set_image_path(self, path):
+        pm = QPixmap(path)
+        if pm.isNull():
+            return False
+        self._pixmap = pm
+        self.update()
+        return True
+
+    def set_size(self, w, h):
+        self.prepareGeometryChange()
+        self._w = max(20.0, float(w))
+        self._h = max(20.0, float(h))
+        self.update()
+
+    # ------- 几何 -------
+    def boundingRect(self):
+        return QRectF(0, 0, self._w, self._h)
+
+    def _handle_rect(self):
+        s = self.HANDLE_SIZE
+        return QRectF(self._w - s, self._h - s, s, s)
+
+    # ------- 绘制 -------
+    def paint(self, painter, option, widget=None):
+        r = self.boundingRect()
+        if not self._pixmap.isNull():
+            pm = self._pixmap
+            # contain：按比例缩到能放进框的最大尺寸，居中
+            s = min(self._w / pm.width(), self._h / pm.height())
+            dw, dh = pm.width() * s, pm.height() * s
+            dx = (self._w - dw) / 2.0
+            dy = (self._h - dh) / 2.0
+            painter.drawPixmap(QRectF(dx, dy, dw, dh), pm, QRectF(pm.rect()))
+        else:
+            painter.fillRect(r, QColor('#f0f0ec'))
+            painter.setPen(QColor('#999999'))
+            painter.drawText(r, Qt.AlignmentFlag.AlignCenter, '双击插入照片')
+        # 导出/打印时不画辅助边框
+        if self._export_mode:
+            return
+        if self.isSelected():
+            painter.setPen(QPen(QColor('#ff8800'), 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(r)
+            painter.fillRect(self._handle_rect(), QColor('#ff8800'))
+        else:
+            painter.setPen(QPen(QColor(21, 101, 192, 160), 0.8, Qt.PenStyle.DashLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(r)
+
+    # ------- 鼠标 -------
+    def hoverMoveEvent(self, event):
+        if self._handle_rect().contains(event.pos()):
+            self.setCursor(QCursor(Qt.CursorShape.SizeFDiagCursor))
+        else:
+            self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._handle_rect().contains(event.pos()):
+            self._resizing = True
+            self._resize_anchor = event.scenePos()
+            self._orig_size = (self._w, self._h)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            dx = event.scenePos().x() - self._resize_anchor.x()
+            dy = event.scenePos().y() - self._resize_anchor.y()
+            self.set_size(self._orig_size[0] + dx, self._orig_size[1] + dy)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._resizing:
+            self._resizing = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        # 双击 = 换照片
+        path, _ = QFileDialog.getOpenFileName(
+            None, '选择照片', '',
+            'Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp)')
+        if path:
+            self.set_image_path(path)
+        event.accept()
+
+    # ------- 序列化 -------
+    def to_dict(self):
+        return {
+            'type': 'photo',
+            'x': self.pos().x(),
+            'y': self.pos().y(),
+            'width': self._w,
+            'height': self._h,
+            'image_base64': pixmap_to_base64(self._pixmap) if not self._pixmap.isNull() else '',
+        }
+
+    @classmethod
+    def from_dict(cls, d, scene_ref):
+        p = cls(scene_ref, d.get('width', 200.0), d.get('height', 150.0))
+        p.setPos(d.get('x', 0), d.get('y', 0))
+        b64 = d.get('image_base64', '')
+        if b64:
+            p.set_pixmap(pixmap_from_base64(b64))
+        return p
+
+
 class CanvasScene(QGraphicsScene):
-    """画布场景：背景图 + 多个文字框 + 鼠标拖框新建"""
-    selection_changed = pyqtSignal(object)   # 当前选中的 TextBoxItem 或 None
+    """画布场景：背景图 + 多个文字框/照片框 + 鼠标拖框新建"""
+    selection_changed = pyqtSignal(object)   # 当前选中的 TextBoxItem / PhotoBoxItem 或 None
 
     def __init__(self):
         super().__init__()
@@ -303,22 +443,24 @@ class CanvasScene(QGraphicsScene):
         self.addItem(item)
         self.bg_item = item
 
-    def text_items(self):
-        return [it for it in self.items() if isinstance(it, TextBoxItem)]
+    def box_items(self):
+        """所有文字框 + 照片框"""
+        return [it for it in self.items()
+                if isinstance(it, (TextBoxItem, PhotoBoxItem))]
 
     def _on_selection(self):
         sel = self.selectedItems()
         cur = None
         for it in sel:
-            if isinstance(it, TextBoxItem):
+            if isinstance(it, (TextBoxItem, PhotoBoxItem)):
                 cur = it; break
         self.selection_changed.emit(cur)
 
     # ------- 鼠标：在空白处拖出新文字框 -------
     def mousePressEvent(self, event):
         item = self.itemAt(event.scenePos(), QTransform())
-        # 文字框、文字框子元素（cursor / handle）→ 默认处理
-        if isinstance(item, TextBoxItem):
+        # 文字框 / 照片框 → 默认处理（选中、拖动、缩放）
+        if isinstance(item, (TextBoxItem, PhotoBoxItem)):
             super().mousePressEvent(event)
             return
         # 背景图也不算

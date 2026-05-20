@@ -8,6 +8,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 
+from canvas import TextBoxItem, PhotoBoxItem
+
 
 def make_section_title(text):
     lbl = QLabel(text)
@@ -50,7 +52,7 @@ class SidePanel(QWidget):
         self.setFixedWidth(330)
         self.font_manager = font_manager
         self.template_store = template_store
-        self._current_text_item = None
+        self._current_item = None
         self._building = False   # 防止 signal 回环
         self._init_ui()
         self._refresh_template_list()
@@ -119,8 +121,9 @@ class SidePanel(QWidget):
 
         layout.addWidget(make_hr())
 
-        # ===== 4. 文字框属性（选中时显示）=====
-        layout.addWidget(make_section_title('文字框样式'))
+        # ===== 4. 文字框 / 照片框属性（选中时显示）=====
+        self.style_title = make_section_title('文字框样式')
+        layout.addWidget(self.style_title)
         self.props_widget = QWidget()
         plv = QVBoxLayout(self.props_widget); plv.setContentsMargins(0,0,0,0); plv.setSpacing(4)
 
@@ -189,11 +192,32 @@ class SidePanel(QWidget):
         self.line_spin.valueChanged.connect(lambda v: self._emit('line_height', v))
         plv.addWidget(self.line_spin)
 
+        btn_to_photo = QPushButton('插入照片…'); btn_to_photo.setProperty('role','secondary')
+        btn_to_photo.clicked.connect(lambda: self._emit('insert_photo', True))
+        plv.addWidget(btn_to_photo)
         btn_del = QPushButton('删除文字框'); btn_del.setProperty('role','danger')
         btn_del.clicked.connect(lambda: self._emit('delete', True))
         plv.addWidget(btn_del)
         layout.addWidget(self.props_widget)
         self.props_widget.setEnabled(False)
+
+        # 照片框属性（选中照片框时显示，替换上面的文字面板）
+        self.photo_widget = QWidget()
+        plv2 = QVBoxLayout(self.photo_widget); plv2.setContentsMargins(0,0,0,0); plv2.setSpacing(4)
+        hint_p = QLabel('双击照片框可换图。照片完整保比例显示，框内可能留白。')
+        hint_p.setStyleSheet('color:#888; font-size:11px;'); hint_p.setWordWrap(True)
+        plv2.addWidget(hint_p)
+        btn_change = QPushButton('换照片…')
+        btn_change.clicked.connect(lambda: self._emit('change_photo', True))
+        plv2.addWidget(btn_change)
+        btn_revert = QPushButton('改回文字框'); btn_revert.setProperty('role','secondary')
+        btn_revert.clicked.connect(lambda: self._emit('revert_to_text', True))
+        plv2.addWidget(btn_revert)
+        btn_del_p = QPushButton('删除照片框'); btn_del_p.setProperty('role','danger')
+        btn_del_p.clicked.connect(lambda: self._emit('delete', True))
+        plv2.addWidget(btn_del_p)
+        layout.addWidget(self.photo_widget)
+        self.photo_widget.setVisible(False)
 
         layout.addStretch()
 
@@ -292,15 +316,20 @@ class SidePanel(QWidget):
             self.btn_color.setStyleSheet(f'background:{hex_}; color:{"#fff" if c.lightness()<128 else "#000"};')
             self._emit('color', hex_)
 
-    # ===== 同步选中文字框 → 面板 UI =====
-    def bind_text_item(self, item):
-        self._current_text_item = item
+    # ===== 同步选中的框 → 面板 UI =====
+    def bind_selection(self, item):
+        self._current_item = item
         self._building = True
-        if item is None:
-            self.props_widget.setEnabled(False)
+        is_text = isinstance(item, TextBoxItem)
+        is_photo = isinstance(item, PhotoBoxItem)
+        # 照片框 → 显示照片面板；文字框 / 无选中 → 显示文字面板
+        self.props_widget.setVisible(not is_photo)
+        self.photo_widget.setVisible(is_photo)
+        self.props_widget.setEnabled(is_text)
+        self.style_title.setText('照片框' if is_photo else '文字框样式')
+        if not is_text:
             self._building = False
             return
-        self.props_widget.setEnabled(True)
         f = item.font()
         idx = self.font_combo.findData(f.family())
         if idx >= 0: self.font_combo.setCurrentIndex(idx)

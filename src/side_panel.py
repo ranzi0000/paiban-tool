@@ -1,9 +1,9 @@
 """右侧面板：模板、方向、字体导入、文字框样式属性"""
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QPushButton, QLabel, QLineEdit,
     QComboBox, QSpinBox, QDoubleSpinBox, QListWidget, QListWidgetItem,
     QFrame, QColorDialog, QFileDialog, QInputDialog, QMessageBox,
-    QButtonGroup, QSizePolicy,
+    QButtonGroup, QSizePolicy, QScrollArea,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
@@ -20,7 +20,7 @@ def make_section_title(text):
 
 def make_field_label(text):
     lbl = QLabel(text)
-    lbl.setStyleSheet('color:#666; font-size:12px; padding-top:6px;')
+    lbl.setStyleSheet('color:#555; font-size:12px;')
     return lbl
 
 
@@ -49,7 +49,6 @@ class SidePanel(QWidget):
     def __init__(self, font_manager, template_store):
         super().__init__()
         self.setObjectName('sidePanel')
-        self.setFixedWidth(330)
         self.font_manager = font_manager
         self.template_store = template_store
         self._current_item = None
@@ -59,7 +58,14 @@ class SidePanel(QWidget):
         self._refresh_imported_fonts_list()
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # 可滚动的内容区（窗口变矮时面板内部滚动，不撑大窗口）
+        content = QWidget()
+        content.setObjectName('sideContent')
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(8)
 
@@ -115,7 +121,7 @@ class SidePanel(QWidget):
         self.imp_font_list.setMaximumHeight(80)
         self.imp_font_list.itemDoubleClicked.connect(self._on_remove_font)
         layout.addWidget(self.imp_font_list)
-        hint = QLabel('双击列表项移除。Qt 字体引擎宽容，30MB 中文字体能直接吃。')
+        hint = QLabel('双击列表项可移除已导入的字体。')
         hint.setStyleSheet('color:#888; font-size:11px;'); hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -125,79 +131,87 @@ class SidePanel(QWidget):
         self.style_title = make_section_title('文字框样式')
         layout.addWidget(self.style_title)
         self.props_widget = QWidget()
-        plv = QVBoxLayout(self.props_widget); plv.setContentsMargins(0,0,0,0); plv.setSpacing(4)
+        form = QFormLayout(self.props_widget)
+        form.setContentsMargins(0, 4, 0, 0)
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
-        plv.addWidget(make_field_label('排版方向'))
-        row = QHBoxLayout()
+        # 方向
+        dir_row = QHBoxLayout(); dir_row.setSpacing(4)
         self.btn_dir_h = QPushButton('横排'); self.btn_dir_h.setProperty('role','toggle'); self.btn_dir_h.setCheckable(True); self.btn_dir_h.setChecked(True)
         self.btn_dir_v = QPushButton('竖排'); self.btn_dir_v.setProperty('role','toggle'); self.btn_dir_v.setCheckable(True)
         dir_grp = QButtonGroup(self); dir_grp.setExclusive(True); dir_grp.addButton(self.btn_dir_h); dir_grp.addButton(self.btn_dir_v)
         self.btn_dir_h.clicked.connect(lambda: self._on_direction_clicked('horizontal'))
         self.btn_dir_v.clicked.connect(lambda: self._on_direction_clicked('vertical'))
-        row.addWidget(self.btn_dir_h); row.addWidget(self.btn_dir_v); row.addStretch()
-        plv.addLayout(row)
+        dir_row.addWidget(self.btn_dir_h); dir_row.addWidget(self.btn_dir_v); dir_row.addStretch()
+        form.addRow(make_field_label('方向'), dir_row)
 
-        plv.addWidget(make_field_label('字体'))
+        # 字体
         self.font_combo = QComboBox()
         self.font_combo.setMaxVisibleItems(20)
         # 用 currentIndexChanged + itemData 取真实 family（不是带 ★ 前缀的 displayText）
         self.font_combo.currentIndexChanged.connect(
             lambda i: self._emit('font_family', self.font_combo.itemData(i)) if i >= 0 else None
         )
-        plv.addWidget(self.font_combo)
+        form.addRow(make_field_label('字体'), self.font_combo)
 
-        plv.addWidget(make_field_label('字号 (pt)'))
+        # 字号
         size_row = QHBoxLayout(); size_row.setSpacing(4)
         self.size_spin = QSpinBox()
         self.size_spin.setRange(4, 300)
         self.size_spin.setValue(18)
         self.size_spin.setSingleStep(2)  # 上下箭头每次 +/- 2，变化更明显
+        self.size_spin.setSuffix(' pt')
         self.size_spin.valueChanged.connect(lambda v: self._emit('font_size', v))
-        btn_minus = QPushButton('−'); btn_minus.setProperty('role','secondary'); btn_minus.setFixedWidth(36)
-        btn_plus  = QPushButton('+'); btn_plus.setProperty('role','secondary');  btn_plus.setFixedWidth(36)
+        btn_minus = QPushButton('−'); btn_minus.setProperty('role','secondary'); btn_minus.setFixedWidth(34)
+        btn_plus  = QPushButton('+'); btn_plus.setProperty('role','secondary');  btn_plus.setFixedWidth(34)
         btn_minus.clicked.connect(lambda: self.size_spin.setValue(self.size_spin.value() - 2))
         btn_plus.clicked.connect(lambda:  self.size_spin.setValue(self.size_spin.value() + 2))
         size_row.addWidget(btn_minus); size_row.addWidget(self.size_spin, 1); size_row.addWidget(btn_plus)
-        plv.addLayout(size_row)
+        form.addRow(make_field_label('字号'), size_row)
 
-        plv.addWidget(make_field_label('样式'))
-        row = QHBoxLayout()
+        # 样式
+        style_row = QHBoxLayout(); style_row.setSpacing(4)
         self.btn_bold = QPushButton('B'); self.btn_bold.setProperty('role','toggle'); self.btn_bold.setCheckable(True); self.btn_bold.setFixedWidth(40)
         self.btn_italic = QPushButton('I'); self.btn_italic.setProperty('role','toggle'); self.btn_italic.setCheckable(True); self.btn_italic.setFixedWidth(40)
         self.btn_bold.clicked.connect(lambda: self._emit('font_bold', self.btn_bold.isChecked()))
         self.btn_italic.clicked.connect(lambda: self._emit('font_italic', self.btn_italic.isChecked()))
-        row.addWidget(self.btn_bold); row.addWidget(self.btn_italic); row.addStretch()
-        plv.addLayout(row)
+        style_row.addWidget(self.btn_bold); style_row.addWidget(self.btn_italic); style_row.addStretch()
+        form.addRow(make_field_label('样式'), style_row)
 
-        plv.addWidget(make_field_label('对齐'))
-        row = QHBoxLayout()
+        # 对齐
+        align_row = QHBoxLayout(); align_row.setSpacing(4)
         self.btn_align_l = QPushButton('左'); self.btn_align_l.setProperty('role','toggle'); self.btn_align_l.setCheckable(True); self.btn_align_l.setChecked(True); self.btn_align_l.setFixedWidth(40)
         self.btn_align_c = QPushButton('中'); self.btn_align_c.setProperty('role','toggle'); self.btn_align_c.setCheckable(True); self.btn_align_c.setFixedWidth(40)
         self.btn_align_r = QPushButton('右'); self.btn_align_r.setProperty('role','toggle'); self.btn_align_r.setCheckable(True); self.btn_align_r.setFixedWidth(40)
         align_grp = QButtonGroup(self); align_grp.setExclusive(True)
-        for b in (self.btn_align_l, self.btn_align_c, self.btn_align_r): align_grp.addButton(b); row.addWidget(b)
-        row.addStretch()
+        for b in (self.btn_align_l, self.btn_align_c, self.btn_align_r): align_grp.addButton(b); align_row.addWidget(b)
+        align_row.addStretch()
         self.btn_align_l.clicked.connect(lambda: self._emit('align', 'left'))
         self.btn_align_c.clicked.connect(lambda: self._emit('align', 'center'))
         self.btn_align_r.clicked.connect(lambda: self._emit('align', 'right'))
-        plv.addLayout(row)
+        form.addRow(make_field_label('对齐'), align_row)
 
-        plv.addWidget(make_field_label('字色'))
+        # 字色
         self.btn_color = QPushButton('#000000')
         self.btn_color.clicked.connect(self._pick_color)
-        plv.addWidget(self.btn_color)
+        form.addRow(make_field_label('字色'), self.btn_color)
 
-        plv.addWidget(make_field_label('行高 (×)'))
+        # 行高
         self.line_spin = QDoubleSpinBox(); self.line_spin.setRange(0.8, 3.0); self.line_spin.setSingleStep(0.05); self.line_spin.setValue(1.25)
+        self.line_spin.setSuffix(' ×')
         self.line_spin.valueChanged.connect(lambda v: self._emit('line_height', v))
-        plv.addWidget(self.line_spin)
+        form.addRow(make_field_label('行高'), self.line_spin)
 
+        # 操作（占整行）
+        form.addRow(make_hr())
         btn_to_photo = QPushButton('插入照片…'); btn_to_photo.setProperty('role','secondary')
         btn_to_photo.clicked.connect(lambda: self._emit('insert_photo', True))
-        plv.addWidget(btn_to_photo)
+        form.addRow(btn_to_photo)
         btn_del = QPushButton('删除文字框'); btn_del.setProperty('role','danger')
         btn_del.clicked.connect(lambda: self._emit('delete', True))
-        plv.addWidget(btn_del)
+        form.addRow(btn_del)
         layout.addWidget(self.props_widget)
         self.props_widget.setEnabled(False)
 
@@ -221,11 +235,23 @@ class SidePanel(QWidget):
 
         layout.addStretch()
 
-        # ===== 5. 导出 PDF =====
-        btn_pdf = QPushButton('⬇  导出 PDF')
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(scroll, 1)
+
+        # ===== 5. 导出 PDF（底部固定，始终可见）=====
+        footer = QWidget()
+        footer.setObjectName('sideFooter')
+        fl = QVBoxLayout(footer)
+        fl.setContentsMargins(14, 10, 14, 14)
+        btn_pdf = QPushButton('导出 PDF')
         btn_pdf.setProperty('role', 'primary')
         btn_pdf.clicked.connect(self.export_pdf.emit)
-        layout.addWidget(btn_pdf)
+        fl.addWidget(btn_pdf)
+        outer.addWidget(footer, 0)
 
         # 装填字体下拉（首次）
         self._refresh_font_combo()

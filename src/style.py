@@ -9,16 +9,18 @@ QMainWindow, QWidget {
 }
 
 QSplitter::handle { background: #d0d0c8; }
-QSplitter::handle:horizontal { width: 2px; }
+QSplitter::handle:horizontal { width: 6px; }
+QSplitter::handle:horizontal:hover { background: #b8b8b0; }
 
 /* 左侧画布灰底 */
 #canvasArea { background: #555; }
 #canvasArea QScrollBar:vertical, #canvasArea QScrollBar:horizontal { background: #444; }
 
 /* 右侧面板 */
-#sidePanel {
+#sidePanel, #sideContent { background: #f8f8f5; }
+#sideFooter {
     background: #f8f8f5;
-    border-left: 1px solid #d0d0c8;
+    border-top: 1px solid #d0d0c8;
 }
 #sidePanel QLabel.section-title {
     font-weight: 600;

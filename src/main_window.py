@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QFileDialog, QMessageBox, QStatusBar,
+    QMainWindow, QFileDialog, QMessageBox, QStatusBar, QSplitter,
 )
 from PyQt6.QtGui import QPixmap, QFont, QColor, QTextOption
 from PyQt6.QtCore import Qt, QPointF
@@ -27,18 +27,23 @@ class MainWindow(QMainWindow):
         self._current_image_path = None
         self._current_pixmap = None  # 保留原始 pixmap 用于保存模板
 
-        # 主体
-        central = QWidget()
-        layout = QHBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
+        # 主体：画布 | 可拖动分隔条 | 右侧面板（面板自带滚动区）
         self.canvas = CanvasView()
         self.side = SidePanel(self.font_manager, self.template_store)
+        self.side.setMinimumWidth(280)
+        self.side.setMaximumWidth(460)
 
-        layout.addWidget(self.canvas, 1)
-        layout.addWidget(self.side, 0)
-        self.setCentralWidget(central)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.canvas)
+        splitter.addWidget(self.side)
+        splitter.setStretchFactor(0, 1)   # 窗口变化时画布伸缩
+        splitter.setStretchFactor(1, 0)
+        splitter.setCollapsible(0, False)
+        splitter.setCollapsible(1, False)
+        splitter.setSizes([920, 340])
+        self.setCentralWidget(splitter)
+
+        self.setMinimumSize(900, 600)
 
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage('就绪。点"选择图片…"开始')

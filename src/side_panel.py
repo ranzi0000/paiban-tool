@@ -124,6 +124,16 @@ class SidePanel(QWidget):
         self.props_widget = QWidget()
         plv = QVBoxLayout(self.props_widget); plv.setContentsMargins(0,0,0,0); plv.setSpacing(4)
 
+        plv.addWidget(make_field_label('排版方向'))
+        row = QHBoxLayout()
+        self.btn_dir_h = QPushButton('横排'); self.btn_dir_h.setProperty('role','toggle'); self.btn_dir_h.setCheckable(True); self.btn_dir_h.setChecked(True)
+        self.btn_dir_v = QPushButton('竖排'); self.btn_dir_v.setProperty('role','toggle'); self.btn_dir_v.setCheckable(True)
+        dir_grp = QButtonGroup(self); dir_grp.setExclusive(True); dir_grp.addButton(self.btn_dir_h); dir_grp.addButton(self.btn_dir_v)
+        self.btn_dir_h.clicked.connect(lambda: self._on_direction_clicked('horizontal'))
+        self.btn_dir_v.clicked.connect(lambda: self._on_direction_clicked('vertical'))
+        row.addWidget(self.btn_dir_h); row.addWidget(self.btn_dir_v); row.addStretch()
+        plv.addLayout(row)
+
         plv.addWidget(make_field_label('字体'))
         self.font_combo = QComboBox()
         self.font_combo.setMaxVisibleItems(20)
@@ -199,6 +209,15 @@ class SidePanel(QWidget):
     def _emit(self, prop, val):
         if self._building: return
         self.text_changed.emit(prop, val)
+
+    def _on_direction_clicked(self, direction):
+        # 竖排时左/中/右对齐无意义 → 置灰
+        self._set_align_enabled(direction == 'horizontal')
+        self._emit('direction', direction)
+
+    def _set_align_enabled(self, enabled):
+        for b in (self.btn_align_l, self.btn_align_c, self.btn_align_r):
+            b.setEnabled(enabled)
 
     # ===== 模板列表 =====
     def _refresh_template_list(self):
@@ -296,4 +315,8 @@ class SidePanel(QWidget):
         c = item.defaultTextColor()
         self.btn_color.setText(c.name())
         self.btn_color.setStyleSheet(f'background:{c.name()}; color:{"#fff" if c.lightness()<128 else "#000"};')
+        d = getattr(item, '_direction', 'horizontal')
+        self.btn_dir_h.setChecked(d == 'horizontal')
+        self.btn_dir_v.setChecked(d == 'vertical')
+        self._set_align_enabled(d == 'horizontal')
         self._building = False

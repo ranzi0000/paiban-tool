@@ -20,13 +20,16 @@ def export_scene_to_pdf(scene: CanvasScene, out_path: str, orient: str = 'landsc
     )
     printer.setPageLayout(layout)
 
-    # 临时隐藏文字框的虚线/选中边（painter 渲染时通过 painter.setPen 已不影响）
-    # QGraphicsTextItem 的 isSelected() 状态会让 paint 画选中框 → 临时取消选中
+    # 导出时隐藏文字框的辅助边框：
+    #  - _export_mode=True 让 paint() 跳过虚线框/选中橙框/缩放手柄
+    #  - 同时取消选中，避免 QGraphicsTextItem 自带的选中虚线进 PDF
     selected_backup = []
-    for it in scene.text_items():
+    text_items = scene.text_items()
+    for it in text_items:
         if it.isSelected():
             selected_backup.append(it)
             it.setSelected(False)
+        it._export_mode = True
 
     painter = QPainter(printer)
     # 关键：painter 在 HighResolution (1200 DPI) 下用 device pixel 坐标系
@@ -37,6 +40,8 @@ def export_scene_to_pdf(scene: CanvasScene, out_path: str, orient: str = 'landsc
     scene.render(painter, QRectF(target_rect), scene.sceneRect())
     painter.end()
 
-    # 恢复选中状态
+    # 恢复状态
+    for it in text_items:
+        it._export_mode = False
     for it in selected_backup:
         it.setSelected(True)

@@ -1,10 +1,11 @@
 """画布：背景图 + 可编辑文字框（基于 QGraphicsView/Scene）"""
 from PyQt6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsItem, QGraphicsTextItem,
-    QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsItemGroup,
+    QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsItemGroup, QInputDialog,
 )
 from PyQt6.QtGui import (
     QPixmap, QPen, QColor, QBrush, QFont, QPainter, QTransform, QCursor,
+    QFontMetricsF,
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QObject
 
@@ -13,6 +14,20 @@ MM_TO_PX = 96 / 25.4   # ~3.78
 A4_LANDSCAPE = (297 * MM_TO_PX, 210 * MM_TO_PX)
 A4_PORTRAIT  = (210 * MM_TO_PX, 297 * MM_TO_PX)
 
+IMG_EXTS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff', '.webp')
+
+
+def first_image_path(mime):
+    """从拖放 mimeData 里取第一个本地图片文件路径，没有则返回 None"""
+    if not mime.hasUrls():
+        return None
+    for url in mime.urls():
+        if url.isLocalFile():
+            p = url.toLocalFile()
+            if p.lower().endswith(IMG_EXTS):
+                return p
+    return None
+
 
 class TextBoxItem(QGraphicsTextItem):
     """可拖动、可编辑、带缩放手柄的文字框"""
@@ -20,6 +35,8 @@ class TextBoxItem(QGraphicsTextItem):
 
     def __init__(self, scene_ref):
         super().__init__()
+        self._direction = 'horizontal'   # 'horizontal' | 'vertical'
+        self._export_mode = False        # 导出 PDF 时置真，paint 跳过辅助边框
         self._scene_ref = scene_ref
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -38,6 +55,83 @@ class TextBoxItem(QGraphicsTextItem):
         self._fixed_width = max(20.0, w)
         self.setTextWidth(self._fixed_width)
 
+    # ------- 排版方向（横排 / 竖排）-------
+    def set_direction(self, d):
+        if d not in ('horizontal', 'vertical') or d == self._direction:
+            return
+        self.prepareGeometryChange()
+        self._direction = d
+        if d == 'vertical':
+            self.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+            self._resizing = False
+        self.update()
+
+    def setFont(self, font):
+        # 字体变化会改变竖排尺寸，先通知几何变更
+        self.prepareGeometryChange()
+        super().setFont(font)
+
+    def setPlainText(self, text):
+        self.prepareGeometryChange()
+        super().setPlainText(text)
+
+    def set_line_height(self, mult):
+        from PyQt6.QtGui import QTextCursor, QTextBlockFormat
+        self.prepareGeometryChange()
+        c = QTextCursor(self.document())
+        c.select(QTextCursor.SelectionType.Document)
+        bf = QTextBlockFormat()
+        bf.setLineHeight(float(mult) * 100, 1)  # 1 = ProportionalHeight
+        c.mergeBlockFormat(bf)
+        self.update()
+
+    # ------- 竖排几何与绘制 -------
+    def _vertical_metrics(self):
+        """返回 (字体度量, 字高, 行进步长, 列宽)"""
+        fm = QFontMetricsF(self.font())
+        cell = fm.height()
+        mult = (self._line_height_pct() or 100) / 100.0
+        if mult <= 0:
+            mult = 1.0
+        return fm, cell, cell * mult, cell
+
+    def _vertical_bounding_rect(self):
+        fm, cell, cell_h, col_w = self._vertical_metrics()
+        cols = self.toPlainText().split('\n')
+        n_cols = max(1, len(cols))
+        max_chars = max([len(c) for c in cols] + [1])
+        return QRectF(0, 0, n_cols * col_w, max_chars * cell_h)
+
+    def _paint_vertical(self, painter):
+        fm, cell, cell_h, col_w = self._vertical_metrics()
+        cols = self.toPlainText().split('\n')
+        n_cols = len(cols)
+        painter.save()
+        painter.setFont(self.font())
+        painter.setPen(QPen(self.defaultTextColor()))
+        for ci, col in enumerate(cols):
+            # 第 0 列在最右，新列往左排（传统右起）
+            x = (n_cols - 1 - ci) * col_w
+            for ri, ch in enumerate(col):
+                adv = fm.horizontalAdvance(ch)
+                cx = x + (col_w - adv) / 2.0
+                baseline = ri * cell_h + (cell_h - cell) / 2.0 + fm.ascent()
+                painter.drawText(QPointF(cx, baseline), ch)
+        painter.restore()
+
+    def boundingRect(self):
+        if self._direction == 'vertical':
+            return self._vertical_bounding_rect()
+        return super().boundingRect()
+
+    def shape(self):
+        if self._direction == 'vertical':
+            from PyQt6.QtGui import QPainterPath
+            path = QPainterPath()
+            path.addRect(self._vertical_bounding_rect())
+            return path
+        return super().shape()
+
     # ------- 缩放手柄 -------
     def _handle_rect(self):
         br = self.boundingRect()
@@ -45,32 +139,39 @@ class TextBoxItem(QGraphicsTextItem):
         return QRectF(br.right() - s, br.bottom() - s, s, s)
 
     def paint(self, painter, option, widget=None):
-        # 选中时画橙色描边 + 缩放手柄；未选中时虚线蓝边
-        super().paint(painter, option, widget)
+        # 文字本体
+        if self._direction == 'vertical':
+            self._paint_vertical(painter)
+        else:
+            super().paint(painter, option, widget)
+        # 导出/打印时不画任何辅助边框
+        if self._export_mode:
+            return
+        # 选中时画橙色描边 + 缩放手柄（手柄仅横排）；未选中时虚线蓝边
         br = self.boundingRect()
         if self.isSelected():
-            pen = QPen(QColor('#ff8800'), 1.5)
-            painter.setPen(pen)
+            painter.setPen(QPen(QColor('#ff8800'), 1.5))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(br)
-            # 缩放手柄
-            painter.fillRect(self._handle_rect(), QColor('#ff8800'))
+            if self._direction == 'horizontal':
+                painter.fillRect(self._handle_rect(), QColor('#ff8800'))
         else:
-            pen = QPen(QColor(21, 101, 192, 160), 0.8, Qt.PenStyle.DashLine)
-            painter.setPen(pen)
+            painter.setPen(QPen(QColor(21, 101, 192, 160), 0.8, Qt.PenStyle.DashLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(br)
 
     def hoverMoveEvent(self, event):
-        if self._handle_rect().contains(event.pos()):
+        if self._direction == 'horizontal' and self._handle_rect().contains(event.pos()):
             self.setCursor(QCursor(Qt.CursorShape.SizeFDiagCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
         super().hoverMoveEvent(event)
 
     def mousePressEvent(self, event):
-        # 缩放手柄检测
-        if event.button() == Qt.MouseButton.LeftButton and self._handle_rect().contains(event.pos()):
+        # 缩放手柄检测（仅横排）
+        if (self._direction == 'horizontal'
+                and event.button() == Qt.MouseButton.LeftButton
+                and self._handle_rect().contains(event.pos())):
             self._resizing = True
             self._resize_anchor = event.scenePos()
             self._orig_width = self._fixed_width
@@ -94,7 +195,18 @@ class TextBoxItem(QGraphicsTextItem):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        # 双击进入编辑模式
+        # 竖排：弹横排输入框编辑（Qt 无原生竖排编辑器）
+        if self._direction == 'vertical':
+            cur = self.toPlainText()
+            if cur == '双击编辑':
+                cur = ''
+            text, ok = QInputDialog.getMultiLineText(
+                None, '编辑竖排文字', '输入文字（回车换行 = 新起一列）：', cur)
+            if ok:
+                self.setPlainText(text if text.strip() else '双击编辑')
+            event.accept()
+            return
+        # 横排：双击就地编辑
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
         self.setFocus(Qt.FocusReason.MouseFocusReason)
         # 选中所有内容（首次双击时）
@@ -123,6 +235,7 @@ class TextBoxItem(QGraphicsTextItem):
             'color': self.defaultTextColor().name(),
             'align': int(self.document().defaultTextOption().alignment().value),
             'line_height': self._line_height_pct(),
+            'direction': self._direction,
         }
 
     def _line_height_pct(self):
@@ -146,6 +259,7 @@ class TextBoxItem(QGraphicsTextItem):
         opt = t.document().defaultTextOption()
         opt.setAlignment(Qt.AlignmentFlag(d.get('align', int(Qt.AlignmentFlag.AlignLeft.value))))
         t.document().setDefaultTextOption(opt)
+        t.set_direction(d.get('direction', 'horizontal'))
         return t
 
 
@@ -256,9 +370,12 @@ class CanvasScene(QGraphicsScene):
 
 class CanvasView(QGraphicsView):
     """视图：负责显示场景、缩放适配窗口"""
+    image_dropped = pyqtSignal(str)   # 拖入图片文件时发出，参数为本地路径
+
     def __init__(self):
         super().__init__()
         self.setObjectName('canvasArea')
+        self.setAcceptDrops(True)
         self.scene_ = CanvasScene()
         self.setScene(self.scene_)
         self.setRenderHints(
@@ -288,3 +405,24 @@ class CanvasView(QGraphicsView):
             event.accept()
         else:
             super().wheelEvent(event)
+
+    # ------- 拖放图片到画布 -------
+    def dragEnterEvent(self, event):
+        if first_image_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if first_image_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        p = first_image_path(event.mimeData())
+        if p:
+            self.image_dropped.emit(p)
+            event.acceptProposedAction()
+        else:
+            event.ignore()

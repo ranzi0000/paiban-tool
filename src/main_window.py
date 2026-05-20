@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPixmap, QFont, QColor, QTextOption
 from PyQt6.QtCore import Qt, QPointF
 
-from canvas import CanvasView, TextBoxItem
+from canvas import CanvasView, TextBoxItem, first_image_path
 from side_panel import SidePanel
 from font_manager import FontManager
 from template_store import TemplateStore, pixmap_to_base64, pixmap_from_base64
@@ -19,6 +19,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle('排版小工具')
         self.resize(1280, 820)
+        self.setAcceptDrops(True)
 
         self.font_manager = FontManager()
         self.template_store = TemplateStore()
@@ -44,6 +45,7 @@ class MainWindow(QMainWindow):
 
         # 信号
         self.canvas.scene_.selection_changed.connect(self.side.bind_text_item)
+        self.canvas.image_dropped.connect(self.load_image_from_path)
         self.side.open_image.connect(self.open_image)
         self.side.orient_changed.connect(self.change_orient)
         self.side.save_template.connect(self.save_template)
@@ -61,6 +63,10 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, '选择图片', '',
             'Images (*.png *.jpg *.jpeg *.bmp *.gif *.tif *.tiff *.webp);;All Files (*)')
         if not path: return
+        self.load_image_from_path(path)
+
+    def load_image_from_path(self, path):
+        """加载一张图片为底图（文件对话框与拖放共用）"""
         pm = QPixmap(path)
         if pm.isNull():
             QMessageBox.warning(self, '错误', '无法加载图片：' + path); return
@@ -76,6 +82,27 @@ class MainWindow(QMainWindow):
         self.canvas.scene_.set_background_image(pm)
         self.canvas.fit_scene()
         self.statusBar().showMessage(f'已加载：{os.path.basename(path)}  {pm.width()}×{pm.height()}')
+
+    # ------- 拖放图片到窗口 -------
+    def dragEnterEvent(self, event):
+        if first_image_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if first_image_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        p = first_image_path(event.mimeData())
+        if p:
+            self.load_image_from_path(p)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def change_orient(self, orient):
         self._orient = orient
@@ -111,6 +138,12 @@ class MainWindow(QMainWindow):
         if prop == 'delete':
             self.canvas.scene_.removeItem(item)
             return
+        if prop == 'direction':
+            item.set_direction(val)
+            return
+        if prop == 'line_height':
+            item.set_line_height(val)
+            return
         f = item.font()
         if prop == 'font_family':
             f.setFamily(val)
@@ -129,13 +162,6 @@ class MainWindow(QMainWindow):
                  'right': Qt.AlignmentFlag.AlignRight}[val]
             opt.setAlignment(a)
             item.document().setDefaultTextOption(opt)
-        elif prop == 'line_height':
-            from PyQt6.QtGui import QTextCursor, QTextBlockFormat
-            c = QTextCursor(item.document())
-            c.select(QTextCursor.SelectionType.Document)
-            bf = QTextBlockFormat()
-            bf.setLineHeight(float(val) * 100, 1)  # 1 = ProportionalHeight
-            c.mergeBlockFormat(bf)
         item.setFont(f)
         item.update()
 

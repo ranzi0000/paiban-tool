@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPixmap, QPen, QColor, QBrush, QFont, QPainter, QTransform, QCursor,
-    QFontMetricsF,
+    QFontMetricsF, QTextCursor, QTextCharFormat,
 )
 from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QObject
 
@@ -70,16 +70,45 @@ class TextBoxItem(QGraphicsTextItem):
         self.update()
 
     def setFont(self, font):
-        # 字体变化会改变竖排尺寸，先通知几何变更
+        # QGraphicsTextItem.setFont 只改 defaultFont；已有字符的 QTextCharFormat
+        # 优先级更高，不会被覆盖 → "字号没办法放大缩小" 的根因
+        # 必须用 cursor.mergeCharFormat 强制刷新整篇文档
         self.prepareGeometryChange()
         super().setFont(font)
+        self._apply_charformat(font=font)
 
     def setPlainText(self, text):
         self.prepareGeometryChange()
         super().setPlainText(text)
+        self._apply_charformat(font=self.font(), color=self.defaultTextColor())
+
+    def setDefaultTextColor(self, color):
+        # 同 setFont：默认色会被已有字符的 charFormat 覆盖，必须强刷
+        super().setDefaultTextColor(color)
+        self._apply_charformat(color=color)
+
+    def _apply_charformat(self, font=None, color=None):
+        """把指定属性强制 merge 到整篇文档 + 当前光标 charFormat。"""
+        if font is None and color is None:
+            return
+        fmt = QTextCharFormat()
+        if font is not None:
+            fmt.setFont(font)
+        if color is not None:
+            fmt.setForeground(color)
+        # 全文 merge
+        doc_cur = QTextCursor(self.document())
+        doc_cur.beginEditBlock()
+        doc_cur.select(QTextCursor.SelectionType.Document)
+        doc_cur.mergeCharFormat(fmt)
+        doc_cur.endEditBlock()
+        # 同步编辑光标，使后续键盘输入也用新格式
+        tc = self.textCursor()
+        tc.mergeCharFormat(fmt)
+        self.setTextCursor(tc)
 
     def set_line_height(self, mult):
-        from PyQt6.QtGui import QTextCursor, QTextBlockFormat
+        from PyQt6.QtGui import QTextBlockFormat
         self.prepareGeometryChange()
         c = QTextCursor(self.document())
         c.select(QTextCursor.SelectionType.Document)
@@ -503,6 +532,10 @@ class CanvasScene(QGraphicsScene):
                     t.set_fixed_width(r.width())
                     self.addItem(t)
                     t.setSelected(True)
+                    # UX：拖出新框直接进入编辑模式，光标就绪可立即输入
+                    t.setPlainText('')
+                    t.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+                    t.setFocus(Qt.FocusReason.MouseFocusReason)
             self._draw_start = None
             self._draw_rect_item = None
             event.accept()
@@ -531,6 +564,8 @@ class CanvasView(QGraphicsView):
         self.setMouseTracking(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 接得到键盘焦点，否则 keyPressEvent（Delete / 方向键 / Ctrl+D）不会触发
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def fit_scene(self):
         self.fitInView(self.scene_.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
@@ -547,6 +582,86 @@ class CanvasView(QGraphicsView):
             event.accept()
         else:
             super().wheelEvent(event)
+
+    # ------- 键盘快捷键 -------
+    def _selected_boxes(self):
+        return [it for it in self.scene_.selectedItems()
+                if isinstance(it, (TextBoxItem, PhotoBoxItem))]
+
+    def _editing_text(self):
+        """是否有 TextBoxItem 正处于编辑模式（应让键盘事件走文字编辑）"""
+        for it in self._selected_boxes():
+            if isinstance(it, TextBoxItem) and \
+                    it.textInteractionFlags() != Qt.TextInteractionFlag.NoTextInteraction:
+                return True
+        return False
+
+    def keyPressEvent(self, event):
+        # 编辑模式让 Qt 处理（输入文字、方向键移光标）
+        if self._editing_text():
+            super().keyPressEvent(event)
+            return
+
+        boxes = self._selected_boxes()
+        key = event.key()
+        mods = event.modifiers()
+        shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        # macOS 兼容：Cmd 也算 ctrl
+        meta = bool(mods & Qt.KeyboardModifier.MetaModifier)
+        ctrl_or_cmd = ctrl or meta
+
+        # Delete / Backspace 删除选中
+        if boxes and key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            for it in boxes:
+                self.scene_.removeItem(it)
+            event.accept()
+            return
+
+        # 方向键微移（Shift = 10px，否则 1px）
+        arrow_delta = {
+            Qt.Key.Key_Left:  (-1, 0),
+            Qt.Key.Key_Right: ( 1, 0),
+            Qt.Key.Key_Up:    ( 0,-1),
+            Qt.Key.Key_Down:  ( 0, 1),
+        }
+        if boxes and key in arrow_delta:
+            step = 10 if shift else 1
+            dx, dy = arrow_delta[key]
+            for it in boxes:
+                it.setPos(it.pos().x() + dx*step, it.pos().y() + dy*step)
+            event.accept()
+            return
+
+        # Ctrl+D 复制选中（位置 +12/+12）
+        if boxes and ctrl_or_cmd and key == Qt.Key.Key_D:
+            copies = []
+            for it in boxes:
+                if isinstance(it, TextBoxItem):
+                    new_it = TextBoxItem.from_dict(it.to_dict(), self.scene_)
+                elif isinstance(it, PhotoBoxItem):
+                    new_it = PhotoBoxItem.from_dict(it.to_dict(), self.scene_)
+                else:
+                    continue
+                new_it.setPos(it.pos().x() + 12, it.pos().y() + 12)
+                self.scene_.addItem(new_it)
+                copies.append(new_it)
+            # 选中新副本，原选中取消，方便用户继续 Ctrl+D 连续复制成阵列
+            for it in boxes:
+                it.setSelected(False)
+            for c in copies:
+                c.setSelected(True)
+            event.accept()
+            return
+
+        # Esc 退出编辑模式 / 取消选中
+        if key == Qt.Key.Key_Escape:
+            for it in boxes:
+                it.setSelected(False)
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
 
     # ------- 拖放图片到画布 -------
     def dragEnterEvent(self, event):

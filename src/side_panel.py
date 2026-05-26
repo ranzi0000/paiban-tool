@@ -161,13 +161,15 @@ class SidePanel(QWidget):
         self.size_spin = QSpinBox()
         self.size_spin.setRange(4, 300)
         self.size_spin.setValue(18)
-        self.size_spin.setSingleStep(2)  # 上下箭头每次 +/- 2，变化更明显
+        self.size_spin.setSingleStep(1)  # 上下箭头每次 +/- 1，精细微调
         self.size_spin.setSuffix(' pt')
+        # 选中数字后键盘直接输入：StepNone 让用户拖滚轮调，但回车后立即生效
+        self.size_spin.setKeyboardTracking(False)
         self.size_spin.valueChanged.connect(lambda v: self._emit('font_size', v))
         btn_minus = QPushButton('−'); btn_minus.setProperty('role','secondary'); btn_minus.setFixedWidth(34)
         btn_plus  = QPushButton('+'); btn_plus.setProperty('role','secondary');  btn_plus.setFixedWidth(34)
-        btn_minus.clicked.connect(lambda: self.size_spin.setValue(self.size_spin.value() - 2))
-        btn_plus.clicked.connect(lambda:  self.size_spin.setValue(self.size_spin.value() + 2))
+        btn_minus.clicked.connect(lambda: self.size_spin.setValue(self.size_spin.value() - 1))
+        btn_plus.clicked.connect(lambda:  self.size_spin.setValue(self.size_spin.value() + 1))
         size_row.addWidget(btn_minus); size_row.addWidget(self.size_spin, 1); size_row.addWidget(btn_plus)
         form.addRow(make_field_label('字号'), size_row)
 

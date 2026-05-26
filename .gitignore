@@ -8,3 +8,7 @@ dist/
 venv/
 *.egg-info/
 .pytest_cache/
+
+# 用户私人素材（祈福牌位底图等），不该入仓
+资料/
+
